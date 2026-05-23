@@ -135,6 +135,102 @@ FILTER_PROFILES: dict[str, dict[str, Any]] = {
     },
 }
 
+CHANNEL_POSITIVE_PATTERNS: list[PatternRule] = [
+    (re.compile(r"\bhelp\b|\bsupport\b|\btroubleshooting\b|\bq(?:na|&a)\b|\bquestions?\b", re.IGNORECASE), 4, "support/help"),
+    (re.compile(r"\bbugs?\b|\bissues?\b|\bbug[ -]?reports?\b", re.IGNORECASE), 4, "bugs/issues"),
+    (re.compile(r"\bdev(?:elopment)?\b|\bcode\b|\bprogramming\b|\bengineering\b", re.IGNORECASE), 4, "development"),
+    (re.compile(r"\bapi(?:s)?\b|\bsdk\b|\bcli\b", re.IGNORECASE), 3, "api/sdk/cli"),
+    (re.compile(r"\bdocs?\b|\bdocumentation\b", re.IGNORECASE), 3, "documentation"),
+    (re.compile(r"\breleases?\b|\bchangelog\b|\broadmap\b", re.IGNORECASE), 2, "release/roadmap"),
+    (re.compile(r"\binstall(?:ation)?\b|\bsetup\b|\bconfig(?:uration)?\b", re.IGNORECASE), 3, "install/setup"),
+    (re.compile(r"\bframework\b|\blibrar(?:y|ies)\b|\bpackage\b|\bplugin\b", re.IGNORECASE), 3, "framework/library"),
+    (re.compile(r"\bgithub\b|\bgitlab\b|\bgit\b|\bpull[ -]?requests?\b|\bprs?\b", re.IGNORECASE), 3, "git/oss"),
+    (re.compile(r"\bpython\b|\bjava\b|\bjavascript\b|\btypescript\b|\brust\b|\bgolang\b|\bgo\b|\blinux\b", re.IGNORECASE), 2, "language/tool"),
+    (re.compile(r"\bbackend\b|\bfrontend\b|\bfull[ -]?stack\b", re.IGNORECASE), 2, "software-area"),
+]
+
+CHANNEL_NEGATIVE_PATTERNS: list[PatternRule] = [
+    (re.compile(r"\boff[ -]?topic\b|\brandom\b|\bcasual\b|\bhangout\b", re.IGNORECASE), 4, "off-topic"),
+    (re.compile(r"\bmemes?\b|\bfun\b|\blol\b", re.IGNORECASE), 4, "memes"),
+    (re.compile(r"\bintroductions?\b|\bwelcome\b", re.IGNORECASE), 3, "introductions"),
+    (re.compile(r"\brules?\b|\broles?\b|\bmod(?:eration)?\b|\badmin\b", re.IGNORECASE), 5, "administrative"),
+    (re.compile(r"\bbots?\b|\blogs?\b|\baudit\b", re.IGNORECASE), 5, "bot/log"),
+    (re.compile(r"\bvoice\b|\bvc\b", re.IGNORECASE), 4, "voice"),
+    (re.compile(r"\bspam\b|\bgiveaways?\b", re.IGNORECASE), 4, "spam/giveaway"),
+    (re.compile(r"\bjobs?\b|\bhiring\b|\bcareer\b|\bsalary\b|\bportfolio\b", re.IGNORECASE), 3, "jobs/career"),
+    (re.compile(r"\bmarketplace\b|\bshop\b|\bsales?\b", re.IGNORECASE), 3, "marketplace"),
+]
+
+CHANNEL_SIGNAL_WEIGHTS: dict[str, float] = {
+    "repository_link_messages": 0.15,
+    "issue_pr_messages": 0.15,
+    "programming_term_messages": 0.25,
+    "code_command_messages": 0.20,
+    "file_extension_messages": 0.10,
+    "log_error_messages": 0.10,
+    "maintenance_messages": 0.05,
+}
+
+CHANNEL_SIGNAL_CAPS: dict[str, float] = {
+    "repository_link_messages": 0.02,
+    "issue_pr_messages": 0.05,
+    "programming_term_messages": 0.15,
+    "code_command_messages": 0.08,
+    "file_extension_messages": 0.04,
+    "log_error_messages": 0.04,
+    "maintenance_messages": 0.05,
+}
+
+CHANNEL_ADMIN_NEGATIVE_TERMS = {"administrative", "bot/log", "voice", "spam/giveaway"}
+CHANNEL_SOCIAL_NEGATIVE_TERMS = {
+    "off-topic",
+    "memes",
+    "introductions",
+    "jobs/career",
+    "marketplace",
+}
+
+CHANNEL_SIGNAL_QUERY = r"""
+WITH message_base AS (
+    SELECT
+        guild_id,
+        guild_name,
+        channel_id,
+        channel_name,
+        author_id,
+        is_bot,
+        timestamp,
+        lower(coalesce(content, '')) AS content
+    FROM read_parquet(?)
+), channel_signals AS (
+    SELECT
+        guild_id,
+        any_value(guild_name) AS guild_name,
+        channel_id,
+        any_value(channel_name) AS channel_name,
+        COUNT(*) AS n_messages,
+        COUNT(DISTINCT author_id) AS n_users,
+        SUM(CASE WHEN is_bot THEN 1 ELSE 0 END) AS n_bot_messages,
+        MIN(timestamp) AS first_message_at,
+        MAX(timestamp) AS last_message_at,
+        SUM(CASE WHEN regexp_matches(content, 'github\.com|gitlab\.com|bitbucket\.org') THEN 1 ELSE 0 END) AS repository_link_messages,
+        SUM(CASE WHEN regexp_matches(content, '\b(issues?|pull requests?|prs?|commits?|merge|branch|bug|fix)\b') THEN 1 ELSE 0 END) AS issue_pr_messages,
+        SUM(CASE WHEN regexp_matches(content, '\b(function|class|method|error|exception|api|dependency|library|package|module|variable|object|compile|build|debug|runtime|framework|endpoint|request|response|json|yaml|docker|kubernetes)\b') THEN 1 ELSE 0 END) AS programming_term_messages,
+        SUM(CASE WHEN regexp_matches(content, '```|`[^`]{2,}`|\b(npm install|pip install|git clone|git checkout|git commit|docker run|docker compose|cargo build|go get|yarn add|pnpm install|apt install|python -m)\b') THEN 1 ELSE 0 END) AS code_command_messages,
+        SUM(CASE WHEN regexp_matches(content, '\.(py|js|ts|tsx|jsx|java|rs|go|json|ya?ml|toml|md|cpp|cs|rb|php|swift|kt|sql)\b') THEN 1 ELSE 0 END) AS file_extension_messages,
+        SUM(CASE WHEN regexp_matches(content, '\b(stack trace|traceback|typeerror|valueerror|nullpointerexception|segmentation fault|syntaxerror|referenceerror|indexerror|keyerror|exception|error:)\b') THEN 1 ELSE 0 END) AS log_error_messages,
+        SUM(CASE WHEN regexp_matches(content, '\b(release|version|breaking change|deprecated|deprecation|changelog|roadmap|milestone|migration|upgrade|update)\b') THEN 1 ELSE 0 END) AS maintenance_messages,
+        SUM(CASE WHEN regexp_matches(content, '\b(open source|oss|github|gitlab|repository|repo|issue|pull request|commit|merge|branch|release|license)\b') THEN 1 ELSE 0 END) AS oss_term_messages,
+        SUM(CASE WHEN regexp_matches(content, 'github\.com|gitlab\.com|bitbucket\.org|\b(issues?|pull requests?|prs?|commits?|merge|branch|bug|fix|function|class|method|error|exception|api|dependency|library|package|module|compile|build|debug|docker|kubernetes|traceback|typeerror|nullpointerexception)\b|```|`[^`]{2,}`|\.(py|js|ts|tsx|jsx|java|rs|go|json|ya?ml|toml|md|cpp|cs|rb|php|swift|kt|sql)\b') THEN 1 ELSE 0 END) AS technical_evidence_messages
+    FROM message_base
+    GROUP BY guild_id, channel_id
+)
+SELECT *
+FROM channel_signals
+WHERE n_messages >= ?
+ORDER BY technical_evidence_messages DESC, n_messages DESC
+"""
+
 MESSAGE_SCHEMA = pa.schema(
     [
         pa.field("guild_id", pa.string()),
@@ -303,6 +399,154 @@ def is_channel_allowed(
     if exclude_patterns and any(pattern.search(channel_name) for pattern in exclude_patterns):
         return False
     return True
+
+
+def bounded_signal_score(count: Any, total: Any, saturation_ratio: float) -> float:
+    total_messages = float(total or 0)
+    if total_messages <= 0:
+        return 0.0
+    return min(float(count or 0) / (total_messages * saturation_ratio), 1.0)
+
+
+def weighted_channel_signal_score(
+    row: dict[str, Any],
+    weights: dict[str, float],
+    caps: dict[str, float],
+) -> float:
+    score = 0.0
+    for column_name, weight in weights.items():
+        score += weight * bounded_signal_score(
+            row.get(column_name),
+            row.get("n_messages"),
+            caps[column_name],
+        )
+    return round(score, 4)
+
+
+def classify_channel_class(
+    software_channel_score: float,
+    lexical_evidence_score: float,
+    oss_evidence_score: float,
+    negative_terms: list[str],
+) -> str:
+    negative_term_set = set(negative_terms)
+    if (
+        negative_term_set.intersection(CHANNEL_ADMIN_NEGATIVE_TERMS)
+        and lexical_evidence_score < 0.30
+        and oss_evidence_score < 0.20
+    ):
+        return "D"
+    if negative_term_set.intersection(CHANNEL_SOCIAL_NEGATIVE_TERMS) and lexical_evidence_score < 0.35:
+        return "C"
+    if software_channel_score >= 0.70 and lexical_evidence_score >= 0.30:
+        return "A"
+    if software_channel_score >= 0.50 or (lexical_evidence_score >= 0.45 and oss_evidence_score >= 0.20):
+        return "B"
+    if negative_term_set.intersection(CHANNEL_ADMIN_NEGATIVE_TERMS):
+        return "D"
+    return "C"
+
+
+def score_channel_record(row: dict[str, Any]) -> dict[str, Any]:
+    channel_name = str(row.get("channel_name") or "")
+    metadata_positive_score, positive_terms = score_text(
+        channel_name,
+        CHANNEL_POSITIVE_PATTERNS,
+    )
+    metadata_negative_score, negative_terms = score_text(
+        channel_name,
+        CHANNEL_NEGATIVE_PATTERNS,
+    )
+    metadata_score = round(
+        min(max(metadata_positive_score - metadata_negative_score, 0) / 8.0, 1.0),
+        4,
+    )
+    lexical_evidence_score = weighted_channel_signal_score(
+        row,
+        CHANNEL_SIGNAL_WEIGHTS,
+        CHANNEL_SIGNAL_CAPS,
+    )
+    oss_evidence_score = round(
+        min(
+            0.60 * bounded_signal_score(row.get("repository_link_messages"), row.get("n_messages"), 0.02)
+            + 0.40 * bounded_signal_score(row.get("oss_term_messages"), row.get("n_messages"), 0.08),
+            1.0,
+        ),
+        4,
+    )
+    software_channel_score = round(
+        0.20 * metadata_score + 0.60 * lexical_evidence_score + 0.20 * oss_evidence_score,
+        4,
+    )
+    channel_class = classify_channel_class(
+        software_channel_score,
+        lexical_evidence_score,
+        oss_evidence_score,
+        negative_terms,
+    )
+
+    return {
+        **row,
+        "metadata_score": metadata_score,
+        "metadata_positive_score": metadata_positive_score,
+        "metadata_negative_score": metadata_negative_score,
+        "matched_channel_positive_terms": dump_json(positive_terms),
+        "matched_channel_negative_terms": dump_json(negative_terms),
+        "lexical_evidence_score": lexical_evidence_score,
+        "oss_evidence_score": oss_evidence_score,
+        "software_channel_score": software_channel_score,
+        "channel_class": channel_class,
+        "include_in_main_analysis": channel_class == "A",
+        "manual_review_required": 0.50 <= software_channel_score < 0.70 or channel_class == "B",
+    }
+
+
+def score_channels_from_messages(messages_parquet: Path, min_messages: int) -> pd.DataFrame:
+    conn = duckdb.connect()
+    try:
+        frame = conn.execute(
+            CHANNEL_SIGNAL_QUERY,
+            [str(messages_parquet.resolve()), min_messages],
+        ).fetchdf()
+    finally:
+        conn.close()
+
+    if frame.empty:
+        return frame
+
+    scored_records = [score_channel_record(row) for row in frame.to_dict(orient="records")]
+    scored = pd.DataFrame(scored_records)
+    scored.sort_values(
+        by=["software_channel_score", "lexical_evidence_score", "n_messages"],
+        ascending=[False, False, False],
+        inplace=True,
+    )
+    return scored
+
+
+def show_channel_preview(frame: pd.DataFrame, limit: int = 15) -> None:
+    preview = frame.head(limit)
+    table = Table(title="Canais pontuados")
+    table.add_column("guild_name")
+    table.add_column("channel_name")
+    table.add_column("class")
+    table.add_column("score", justify="right")
+    table.add_column("lexical", justify="right")
+    table.add_column("oss", justify="right")
+    table.add_column("messages", justify="right")
+
+    for row in preview.itertuples(index=False):
+        table.add_row(
+            str(row.guild_name or ""),
+            str(row.channel_name or ""),
+            str(row.channel_class),
+            f"{row.software_channel_score:.2f}",
+            f"{row.lexical_evidence_score:.2f}",
+            f"{row.oss_evidence_score:.2f}",
+            str(row.n_messages),
+        )
+
+    console.print(table)
 
 
 def classify_server(
@@ -1009,6 +1253,52 @@ def extract_messages_remote(
     console.print(f"[green]Parquet:[/green] {render_path(output_parquet)}")
 
 
+@app.command("score-channels")
+def score_channels(
+    messages_parquet: Path = typer.Option(
+        Path("data/processed/software_messages.parquet"),
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="Parquet com mensagens extraidas.",
+    ),
+    output_parquet: Path = typer.Option(
+        Path("data/processed/software_channels.parquet"),
+        help="Parquet de saida com pontuacao e classe dos canais.",
+    ),
+    output_json: Path = typer.Option(
+        Path("data/processed/software_channels.json"),
+        help="JSON de saida para revisao manual dos canais.",
+    ),
+    min_messages: int = typer.Option(
+        50,
+        min=1,
+        help="Numero minimo de mensagens para pontuar um canal.",
+    ),
+) -> None:
+    scored = score_channels_from_messages(messages_parquet, min_messages)
+    if scored.empty:
+        raise typer.BadParameter(
+            "Nenhum canal atingiu o minimo de mensagens informado."
+        )
+
+    ensure_parent(output_parquet)
+    scored.to_parquet(output_parquet, index=False)
+    ensure_parent(output_json)
+    with output_json.open("w", encoding="utf-8") as file_handle:
+        json.dump(scored.to_dict(orient="records"), file_handle, ensure_ascii=False, indent=2)
+
+    class_counts = scored["channel_class"].value_counts().sort_index()
+    console.print(f"[green]Canais pontuados:[/green] {len(scored):,}")
+    console.print(
+        "[green]Classes:[/green] "
+        + ", ".join(f"{channel_class}={count:,}" for channel_class, count in class_counts.items())
+    )
+    console.print(f"[green]Parquet:[/green] {render_path(output_parquet)}")
+    console.print(f"[green]JSON:[/green] {render_path(output_json)}")
+    show_channel_preview(scored)
+
+
 @app.command("init-duckdb")
 def init_duckdb(
     messages_parquet: Path = typer.Option(
@@ -1025,6 +1315,12 @@ def init_duckdb(
         readable=True,
         help="Parquet com os servidores selecionados.",
     ),
+    channels_parquet: Path | None = typer.Option(
+        None,
+        dir_okay=False,
+        readable=True,
+        help="Parquet opcional com canais pontuados pelo comando score-channels.",
+    ),
     database_path: Path = typer.Option(
         Path("data/duckdb/discord_unveiled.duckdb"),
         help="Arquivo DuckDB a ser criado.",
@@ -1037,6 +1333,9 @@ def init_duckdb(
     conn = duckdb.connect(str(database_path))
     messages_path = str(messages_parquet.resolve()).replace("\\", "/")
     servers_path = str(servers_parquet.resolve()).replace("\\", "/")
+    default_channels_parquet = Path("data/processed/software_channels.parquet")
+    effective_channels_parquet = channels_parquet or default_channels_parquet
+    available_views = ["software_servers", "software_messages", "server_message_stats"]
     conn.execute(
         f"CREATE OR REPLACE VIEW software_servers AS SELECT * FROM read_parquet('{servers_path}')"
     )
@@ -1058,10 +1357,16 @@ def init_duckdb(
         ORDER BY message_count DESC
         """
     )
+    if effective_channels_parquet.exists():
+        channels_path = str(effective_channels_parquet.resolve()).replace("\\", "/")
+        conn.execute(
+            f"CREATE OR REPLACE VIEW software_channels AS SELECT * FROM read_parquet('{channels_path}')"
+        )
+        available_views.append("software_channels")
     conn.close()
 
     console.print(f"[green]DuckDB criado em:[/green] {render_path(database_path)}")
-    console.print("[green]Views disponíveis:[/green] software_servers, software_messages, server_message_stats")
+    console.print("[green]Views disponiveis:[/green] " + ", ".join(available_views))
 
 
 def run() -> None:

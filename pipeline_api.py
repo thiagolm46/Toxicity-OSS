@@ -13,6 +13,8 @@ class ProjectPaths:
     selected_servers_parquet: Path = Path("data/processed/software_servers.parquet")
     selected_servers_json: Path = Path("data/processed/software_servers.json")
     messages_parquet: Path = Path("data/processed/software_messages.parquet")
+    channel_scores_parquet: Path = Path("data/processed/software_channels.parquet")
+    channel_scores_json: Path = Path("data/processed/software_channels.json")
     database_path: Path = Path("data/duckdb/discord_unveiled.duckdb")
 
 
@@ -53,9 +55,18 @@ class ExtractRemoteConfig:
 
 
 @dataclass(slots=True)
+class ChannelScoringConfig:
+    messages_parquet: Path | None = None
+    output_parquet: Path | None = None
+    output_json: Path | None = None
+    min_messages: int = 50
+
+
+@dataclass(slots=True)
 class DuckDBConfig:
     messages_parquet: Path | None = None
     servers_parquet: Path | None = None
+    channels_parquet: Path | None = None
     database_path: Path | None = None
 
 
@@ -129,15 +140,31 @@ class DiscordUnveiledPipeline:
         )
         return output_parquet
 
+    def score_channels(self, config: ChannelScoringConfig | None = None) -> tuple[Path, Path]:
+        cfg = config or ChannelScoringConfig()
+        messages_parquet = cfg.messages_parquet or self.paths.messages_parquet
+        output_parquet = cfg.output_parquet or self.paths.channel_scores_parquet
+        output_json = cfg.output_json or self.paths.channel_scores_json
+
+        pipeline_cli.score_channels(
+            messages_parquet=messages_parquet,
+            output_parquet=output_parquet,
+            output_json=output_json,
+            min_messages=cfg.min_messages,
+        )
+        return output_parquet, output_json
+
     def init_duckdb(self, config: DuckDBConfig | None = None) -> Path:
         cfg = config or DuckDBConfig()
         messages_parquet = cfg.messages_parquet or self.paths.messages_parquet
         servers_parquet = cfg.servers_parquet or self.paths.selected_servers_parquet
+        channels_parquet = cfg.channels_parquet or self.paths.channel_scores_parquet
         database_path = cfg.database_path or self.paths.database_path
 
         pipeline_cli.init_duckdb(
             messages_parquet=messages_parquet,
             servers_parquet=servers_parquet,
+            channels_parquet=channels_parquet,
             database_path=database_path,
         )
         return database_path
