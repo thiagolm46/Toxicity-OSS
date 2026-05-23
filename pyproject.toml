@@ -1,12 +1,11 @@
 [project]
-name = "code"
+name = "discord-unveiled-software-filter"
 version = "0.1.0"
 description = "Pipeline para filtrar servidores de software no Discord-Unveiled e exportar dados para Parquet/DuckDB"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "duckdb>=1.5.1",
-    "huggingface-hub>=1.9.1",
     "httpx>=0.28.1",
     "pandas>=3.0.2",
     "pyarrow>=23.0.1",
