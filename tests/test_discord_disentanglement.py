@@ -236,6 +236,73 @@ def test_candidate_generation_and_score(tmp_path: Path) -> None:
     assert score_pair({"explicit_reply": True}) == 1.0
 
 
+def test_short_same_channel_follow_up_gets_local_continuity_boost(tmp_path: Path) -> None:
+    messages = {
+        "messages": [
+            {
+                "message_id": "m_001",
+                "guild_id": "g1",
+                "guild_name": "Neo4j",
+                "channel_id": "c1",
+                "channel_name": "help-others",
+                "author_id": "u1",
+                "timestamp": "2026-01-01T10:00:00Z",
+                "content": "You do not have the permission to view the message of #rules",
+            },
+            {
+                "message_id": "m_002",
+                "guild_id": "g1",
+                "guild_name": "Neo4j",
+                "channel_id": "c1",
+                "channel_name": "help-others",
+                "author_id": "u2",
+                "timestamp": "2026-01-01T10:04:40Z",
+                "content": "lemme look",
+            },
+            {
+                "message_id": "m_003",
+                "guild_id": "g1",
+                "guild_name": "Neo4j",
+                "channel_id": "c1",
+                "channel_name": "help-others",
+                "author_id": "u2",
+                "timestamp": "2026-01-01T10:05:22Z",
+                "content": "try now",
+            },
+        ]
+    }
+    input_path = tmp_path / "burst.json"
+    input_path.write_text(json.dumps(messages), encoding="utf-8")
+
+    normalized = normalize_messages(
+        load_discord_export(input_path),
+        guild_name="Neo4j",
+        guild_id=None,
+        channel_name="help-others",
+        channel_id=None,
+        preserve_raw_content=False,
+    )
+    candidates = generate_candidate_pairs(
+        messages=normalized,
+        explicit_edges=[],
+        threshold=0.5,
+        uncertain_threshold=0.6,
+        previous_message_window=50,
+        time_window_hours=24,
+        similarity_scan_limit=250,
+        max_candidates_per_message=150,
+    )
+
+    follow_up_pair = next(
+        row for row in candidates if row["source_message_id"] == "m_003" and row["target_message_id"] == "m_002"
+    )
+    best_score = max(row["score"] for row in candidates if row["source_message_id"] == "m_003")
+
+    assert follow_up_pair["same_channel_burst_score"] >= 0.85
+    assert follow_up_pair["score"] == best_score
+    assert follow_up_pair["score"] >= 0.5
+
+
 def test_graph_threads_and_pipeline_outputs(tmp_path: Path) -> None:
     input_path = tmp_path / "export.json"
     out_dir = tmp_path / "neo4j_threads"
@@ -293,6 +360,7 @@ def test_graph_threads_and_pipeline_outputs(tmp_path: Path) -> None:
     html = (out_dir / "reports" / "neo4j_threads.html").read_text(encoding="utf-8")
     assert "Neo4j Threads" in html
     assert "Cobertura dos dados" in html
+    assert "Filtrar por canal" in html
     assert "incivility_label" in html
 
     cypher = (out_dir / "exports" / "neo4j_import.cypher").read_text(encoding="utf-8")

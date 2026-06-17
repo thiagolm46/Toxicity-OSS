@@ -47,38 +47,47 @@ def generate_thread_graph_reports(
             edges_by_thread[source_thread].append(edge)
 
     for thread in threads:
-        rows = []
-        for index, message_id in enumerate(thread.message_ids, start=1):
-            message = message_by_id[message_id]
-            rows.append(
-                {
-                    "position": index,
-                    "message_id": message.message_id,
-                    "author": message.author_anon,
-                    "timestamp": message.timestamp_iso,
-                    "content": message.content_normalized,
-                }
-            )
-        links = [
-            {
-                "source": edge.source_message_id,
-                "target": edge.target_message_id,
-                "type": edge.edge_type,
-                "confidence": edge.confidence,
-                "method": edge.method,
-                "evidence": compact_evidence(edge.evidence),
-            }
-            for edge in sorted(
-                edges_by_thread[thread.thread_id],
-                key=lambda item: (item.source_message_id, item.target_message_id),
-            )
-        ]
-        payload = {"thread": thread_payload(thread), "messages": rows, "links": links}
-        html = THREAD_DETAIL_TEMPLATE.replace(
-            "__THREAD_DATA__",
-            json.dumps(payload, ensure_ascii=False).replace("</", "<\\/"),
+      channel_profile = _thread_channel_profile(thread, message_by_id)
+      rows = []
+      for index, message_id in enumerate(thread.message_ids, start=1):
+        message = message_by_id[message_id]
+        rows.append(
+          {
+            "position": index,
+            "message_id": message.message_id,
+            "author": message.author_anon,
+            "channel": message.channel_name or "unknown",
+            "timestamp": message.timestamp_iso,
+            "content": message.content_normalized,
+          }
         )
-        (output_dir / f"{thread.thread_id}.html").write_text(html, encoding="utf-8")
+      links = [
+        {
+          "source": edge.source_message_id,
+          "target": edge.target_message_id,
+          "type": edge.edge_type,
+          "confidence": edge.confidence,
+          "method": edge.method,
+          "evidence": compact_evidence(edge.evidence),
+        }
+        for edge in sorted(
+          edges_by_thread[thread.thread_id],
+          key=lambda item: (item.source_message_id, item.target_message_id),
+        )
+      ]
+      payload = {
+        "thread": {
+          **thread_payload(thread),
+          **channel_profile,
+        },
+        "messages": rows,
+        "links": links,
+      }
+      html = THREAD_DETAIL_TEMPLATE.replace(
+        "__THREAD_DATA__",
+        json.dumps(payload, ensure_ascii=False).replace("</", "<\\/"),
+      )
+      (output_dir / f"{thread.thread_id}.html").write_text(html, encoding="utf-8")
 
 
 def generate_summary_markdown(
@@ -163,78 +172,83 @@ def build_report_payload(
     thread_messages: list[dict[str, Any]],
     candidate_pairs: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    edge_by_source = {edge.source_message_id: edge for edge in graph_edges}
-    candidate_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in candidate_pairs:
-        candidate_by_source[row["source_message_id"]].append(row)
-    for rows in candidate_by_source.values():
-        rows.sort(key=lambda item: int(item.get("candidate_rank") or 999))
+  message_by_id = {message.message_id: message for message in messages}
+  edge_by_source = {edge.source_message_id: edge for edge in graph_edges}
+  candidate_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+  for row in candidate_pairs:
+    candidate_by_source[row["source_message_id"]].append(row)
+  for rows in candidate_by_source.values():
+    rows.sort(key=lambda item: int(item.get("candidate_rank") or 999))
 
-    messages_by_thread: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in thread_messages:
-        edge = edge_by_source.get(row["message_id"])
-        messages_by_thread[row["thread_id"]].append(
-            {
-                "position": int(row["position"]),
-                "message_id": row["message_id"],
-                "author": row["author_id"],
-                "timestamp": row["timestamp"],
-                "content": row["content_normalized"],
-                "parent_message_id": row["parent_message_id"],
-                "parent_score": row["parent_score"],
-                "link_type": row["link_type"],
-                "evidence": compact_evidence(edge.evidence if edge else {}),
-                "alternatives": compact_alternatives(edge.alternative_parents if edge else []),
-            }
-        )
+  messages_by_thread: dict[str, list[dict[str, Any]]] = defaultdict(list)
+  for row in thread_messages:
+    message = message_by_id[row["message_id"]]
+    edge = edge_by_source.get(row["message_id"])
+    messages_by_thread[row["thread_id"]].append(
+      {
+        "position": int(row["position"]),
+        "message_id": row["message_id"],
+        "author": row["author_id"],
+        "channel": message.channel_name or "unknown",
+        "timestamp": row["timestamp"],
+        "content": row["content_normalized"],
+        "parent_message_id": row["parent_message_id"],
+        "parent_score": row["parent_score"],
+        "link_type": row["link_type"],
+        "evidence": compact_evidence(edge.evidence if edge else {}),
+        "alternatives": compact_alternatives(edge.alternative_parents if edge else []),
+      }
+    )
 
-    thread_payloads = []
-    for thread in threads:
-        thread_payloads.append(
-            {
-                **thread_payload(thread),
-                "messages": messages_by_thread[thread.thread_id],
-                "detail_url": f"thread_graphs/{thread.thread_id}.html",
-            }
-        )
+  thread_payloads = []
+  for thread in threads:
+    channel_profile = _thread_channel_profile(thread, message_by_id)
+    thread_payloads.append(
+      {
+        **thread_payload(thread),
+        **channel_profile,
+        "messages": messages_by_thread[thread.thread_id],
+        "detail_url": f"thread_graphs/{thread.thread_id}.html",
+      }
+    )
 
-    channel_counts = Counter(message.channel_name or "unknown" for message in messages)
-    guild_counts = Counter(message.guild_name or message.guild_id or "unknown" for message in messages)
-    edge_counts = Counter(edge.edge_type for edge in graph_edges)
-    sizes = [thread.message_count for thread in threads]
-    status_counts = Counter(thread.status for thread in threads)
+  channel_counts = Counter(message.channel_name or "unknown" for message in messages)
+  guild_counts = Counter(message.guild_name or message.guild_id or "unknown" for message in messages)
+  edge_counts = Counter(edge.edge_type for edge in graph_edges)
+  sizes = [thread.message_count for thread in threads]
+  status_counts = Counter(thread.status for thread in threads)
 
-    return {
-        "coverage": {
-            "message_count": len(messages),
-            "thread_count": len(threads),
-            "guild_counts": dict(guild_counts.most_common()),
-            "channel_counts": dict(channel_counts.most_common()),
-            "first_message_at": min((message.timestamp_iso for message in messages), default=""),
-            "last_message_at": max((message.timestamp_iso for message in messages), default=""),
-            "note": (
-                "This report only uses messages present in the input file. "
-                "If the count seems low, inspect the upstream extraction/parquet."
-            ),
-        },
-        "metrics": {
-            "avg_messages_per_thread": _avg([float(size) for size in sizes]),
-            "median_messages_per_thread": _median(sizes),
-            "single_message_threads": sum(size == 1 for size in sizes),
-            "short_threads": sum(size <= 2 for size in sizes),
-            "long_threads": sum(size >= 15 for size in sizes),
-            "ok_threads": status_counts.get("ok", 0),
-            "ambiguous_threads": status_counts.get("ambiguous", 0),
-            "needs_review_threads": status_counts.get("needs_review", 0),
-            "explicit_edges": sum(
-                edge_counts.get(edge_type, 0)
-                for edge_type in ("explicit_reply", "native_thread", "quoted_message_link")
-            ),
-            "inferred_edges": edge_counts.get("inferred", 0),
-            "uncertain_edges": edge_counts.get("uncertain", 0),
-        },
-        "threads": thread_payloads,
-    }
+  return {
+    "coverage": {
+      "message_count": len(messages),
+      "thread_count": len(threads),
+      "guild_counts": dict(guild_counts.most_common()),
+      "channel_counts": dict(channel_counts.most_common()),
+      "first_message_at": min((message.timestamp_iso for message in messages), default=""),
+      "last_message_at": max((message.timestamp_iso for message in messages), default=""),
+      "note": (
+        "This report only uses messages present in the input file. "
+        "If the count seems low, inspect the upstream extraction/parquet."
+      ),
+    },
+    "metrics": {
+      "avg_messages_per_thread": _avg([float(size) for size in sizes]),
+      "median_messages_per_thread": _median(sizes),
+      "single_message_threads": sum(size == 1 for size in sizes),
+      "short_threads": sum(size <= 2 for size in sizes),
+      "long_threads": sum(size >= 15 for size in sizes),
+      "ok_threads": status_counts.get("ok", 0),
+      "ambiguous_threads": status_counts.get("ambiguous", 0),
+      "needs_review_threads": status_counts.get("needs_review", 0),
+      "explicit_edges": sum(
+        edge_counts.get(edge_type, 0)
+        for edge_type in ("explicit_reply", "native_thread", "quoted_message_link")
+      ),
+      "inferred_edges": edge_counts.get("inferred", 0),
+      "uncertain_edges": edge_counts.get("uncertain", 0),
+    },
+    "threads": thread_payloads,
+  }
 
 
 def thread_payload(thread: ThreadRecord) -> dict[str, Any]:
@@ -263,6 +277,25 @@ def thread_payload(thread: ThreadRecord) -> dict[str, Any]:
     }
 
 
+def _thread_channel_profile(
+    thread: ThreadRecord,
+    message_by_id: dict[str, MessageRecord],
+) -> dict[str, Any]:
+    channel_counts = Counter(
+        message_by_id[message_id].channel_name or "unknown"
+        for message_id in thread.message_ids
+        if message_id in message_by_id
+    )
+    ordered_channels = [channel for channel, _count in channel_counts.most_common()]
+    primary_channel = ordered_channels[0] if ordered_channels else "unknown"
+    return {
+        "primary_channel": primary_channel,
+        "channel_names": ordered_channels,
+        "channel_counts": dict(channel_counts),
+        "multi_channel": len(ordered_channels) > 1,
+    }
+
+
 def compact_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
     if not evidence:
         return {}
@@ -275,6 +308,7 @@ def compact_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
         "question_answer_score",
         "same_native_thread_score",
         "participant_continuity_score",
+        "same_channel_burst_score",
         "shared_technical_token_count",
         "technical_discussion_score",
         "evidence_labels",
@@ -314,44 +348,218 @@ SIMPLE_REPORT_TEMPLATE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Neo4j Threads</title>
 <style>
-:root { --ink:#172026; --muted:#5f6b76; --line:#d9e0e6; --bg:#f6f8fa; --panel:#fff; --accent:#2364aa; --warn:#9a5b00; --bad:#a23b3b; --ok:#28724f; }
+:root {
+  --ink:#142033;
+  --muted:#5f6f82;
+  --line:#d5dce6;
+  --bg:#eef3f8;
+  --panel:#ffffff;
+  --accent:#1f6feb;
+  --accent-soft:#dbeafe;
+  --hero:#102a43;
+  --hero-2:#0f4c5c;
+  --warn:#a15c07;
+  --bad:#b42318;
+  --ok:#157f5d;
+  --shadow:0 20px 44px rgba(16, 42, 67, 0.08);
+}
 * { box-sizing:border-box; }
-body { margin:0; font-family:Segoe UI, Arial, sans-serif; background:var(--bg); color:var(--ink); }
-header { background:var(--panel); border-bottom:1px solid var(--line); padding:18px 24px; }
-h1 { margin:0 0 6px; font-size:24px; }
+body {
+  margin:0;
+  font-family:"Trebuchet MS", "Segoe UI", sans-serif;
+  background:radial-gradient(circle at top left, #ffffff 0, #eef3f8 38%, #e7eef6 100%);
+  color:var(--ink);
+}
+header {
+  padding:22px 24px 24px;
+  background:linear-gradient(135deg, var(--hero) 0%, var(--hero-2) 100%);
+  color:white;
+  border-bottom:1px solid rgba(255,255,255,0.12);
+}
+h1 { margin:0 0 8px; font-size:28px; letter-spacing:0.01em; }
 h2 { margin:0 0 10px; font-size:18px; }
 h3 { margin:0; font-size:15px; }
 p { margin:4px 0; color:var(--muted); }
+header p { color:rgba(255,255,255,0.82); max-width:900px; }
 button, input, select { font:inherit; }
-main { display:grid; grid-template-columns:420px minmax(0,1fr); gap:16px; padding:16px 24px 28px; }
-.coverage, .metrics, .filters, .list, .detail { background:var(--panel); border:1px solid var(--line); border-radius:8px; }
-.coverage { margin:16px 24px 0; padding:14px 16px; }
+main { display:grid; grid-template-columns:430px minmax(0, 1fr); gap:18px; padding:18px 24px 28px; }
+.coverage, .metrics, .filters, .list, .detail, .result-summary {
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:18px;
+  box-shadow:var(--shadow);
+}
+.coverage {
+  margin:18px 24px 0;
+  padding:18px 18px 16px;
+  position:relative;
+  overflow:hidden;
+}
+.coverage::after {
+  content:"";
+  position:absolute;
+  top:-30px;
+  right:-30px;
+  width:140px;
+  height:140px;
+  background:radial-gradient(circle, rgba(31,111,235,0.14), rgba(31,111,235,0));
+  pointer-events:none;
+}
 .coverage strong { color:var(--ink); }
-.metrics { margin:12px 24px 0; padding:12px; display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
-.metric { border:1px solid var(--line); border-radius:6px; padding:8px 10px; background:#fbfcfd; }
-.metric span { display:block; color:var(--muted); font-size:12px; }
-.metric strong { display:block; font-size:20px; margin-top:2px; }
-.filters { padding:12px; margin-bottom:12px; display:grid; gap:10px; }
-label { display:grid; gap:4px; color:var(--muted); font-size:12px; }
-input, select { width:100%; border:1px solid var(--line); border-radius:6px; padding:8px; background:white; color:var(--ink); }
-.list { max-height:calc(100vh - 250px); overflow:auto; }
-.thread-row { width:100%; border:0; border-bottom:1px solid var(--line); background:white; text-align:left; padding:10px 12px; cursor:pointer; }
-.thread-row:hover, .thread-row.active { background:#eef5ff; }
-.thread-title { display:block; color:var(--ink); font-weight:650; line-height:1.25; }
-.thread-meta { display:block; color:var(--muted); font-size:12px; margin-top:4px; }
-.detail { min-height:560px; padding:16px; }
-.detail-head { display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); padding-bottom:12px; margin-bottom:12px; }
-.badge { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 8px; font-size:12px; margin:2px 4px 2px 0; background:#f4f6f8; }
+.metrics {
+  margin:12px 24px 0;
+  padding:12px;
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
+  gap:10px;
+}
+.metric {
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:10px 12px;
+  background:linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+.metric span { display:block; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:0.04em; }
+.metric strong { display:block; font-size:22px; margin-top:4px; }
+.filters { padding:14px; margin-bottom:12px; display:grid; gap:12px; }
+.filter-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+label { display:grid; gap:5px; color:var(--muted); font-size:12px; }
+label.span-2 { grid-column:1 / -1; }
+input, select {
+  width:100%;
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:10px 11px;
+  background:white;
+  color:var(--ink);
+}
+.filter-actions { display:flex; justify-content:flex-end; }
+.filter-actions button {
+  border:1px solid #c1cbd8;
+  border-radius:999px;
+  background:#f8fafc;
+  color:var(--ink);
+  padding:8px 12px;
+  cursor:pointer;
+}
+.result-summary { padding:12px 14px; margin-bottom:12px; }
+.result-summary strong { color:var(--ink); }
+.list { max-height:calc(100vh - 290px); overflow:auto; padding:8px; }
+.thread-row {
+  width:100%;
+  border:1px solid transparent;
+  border-radius:16px;
+  background:linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+  text-align:left;
+  padding:14px 14px 14px 18px;
+  cursor:pointer;
+  margin-bottom:10px;
+  position:relative;
+}
+.thread-row::before {
+  content:"";
+  position:absolute;
+  left:0;
+  top:8px;
+  bottom:8px;
+  width:6px;
+  border-radius:999px;
+  background:var(--channel-accent, var(--accent));
+}
+.thread-row:hover {
+  border-color:#c8d7ea;
+  transform:translateY(-1px);
+}
+.thread-row.active {
+  border-color:#9cc0ff;
+  background:linear-gradient(180deg, #edf4ff 0%, #f8fbff 100%);
+  box-shadow:0 12px 24px rgba(31, 111, 235, 0.12);
+}
+.thread-headline,
+.thread-tags,
+.thread-meta,
+.thread-submeta { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.thread-id { font-size:11px; color:var(--muted); letter-spacing:0.06em; text-transform:uppercase; }
+.thread-title { display:block; color:var(--ink); font-weight:700; line-height:1.28; margin:8px 0 6px; }
+.thread-meta, .thread-submeta { color:var(--muted); font-size:12px; }
+.detail {
+  min-height:620px;
+  padding:16px;
+  display:grid;
+  gap:14px;
+  align-content:start;
+}
+.detail-hero {
+  border:1px solid var(--line);
+  border-radius:18px;
+  padding:16px 18px;
+  background:linear-gradient(135deg, rgba(16, 42, 67, 0.03), rgba(15, 76, 92, 0.08));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,0.35);
+  position:relative;
+}
+.detail-hero::before {
+  content:"";
+  position:absolute;
+  left:0;
+  top:0;
+  bottom:0;
+  width:8px;
+  border-radius:18px 0 0 18px;
+  background:var(--thread-accent, var(--accent));
+}
+.detail-head { display:flex; justify-content:space-between; gap:16px; }
+.detail-title { padding-left:10px; }
+.detail-side { min-width:210px; display:grid; gap:10px; align-content:start; }
+.detail-kpis {
+  display:grid;
+  grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:8px;
+}
+.detail-kpi {
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:8px 10px;
+  background:rgba(255,255,255,0.75);
+}
+.detail-kpi span { display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:0.04em; }
+.detail-kpi strong { display:block; margin-top:3px; font-size:16px; }
+.thread-channel-strip { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; padding-left:10px; }
+.badge {
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  border:1px solid var(--line);
+  border-radius:999px;
+  padding:4px 10px;
+  font-size:12px;
+  margin:2px 4px 2px 0;
+  background:#f4f6f8;
+  color:var(--ink);
+}
 .badge.ok { color:var(--ok); border-color:#a9d7c0; background:#eef8f3; }
 .badge.ambiguous, .badge.needs_review { color:var(--warn); border-color:#e2bd7c; background:#fff8e8; }
 .badge.uncertain { color:var(--bad); border-color:#e4b4b4; background:#fff0f0; }
-.message { border-left:3px solid #ccd6df; padding:10px 0 10px 12px; margin:0 0 8px; }
-.message-meta { color:var(--muted); font-size:12px; margin-bottom:5px; }
-.message-content { white-space:pre-wrap; line-height:1.45; }
-.link-line { color:#355c7d; font-size:12px; margin-top:6px; }
-details { margin-top:6px; }
+.channel-badge {
+  border-color:color-mix(in srgb, var(--badge-accent, var(--accent)) 25%, white);
+  background:color-mix(in srgb, var(--badge-accent, var(--accent)) 14%, white);
+  color:var(--ink);
+}
+.message {
+  border:1px solid var(--line);
+  border-left:6px solid var(--thread-accent, #ccd6df);
+  border-radius:16px;
+  background:white;
+  padding:12px 14px 12px 14px;
+  margin:0;
+  box-shadow:0 6px 18px rgba(20, 32, 51, 0.04);
+}
+.message-meta { color:var(--muted); font-size:12px; margin-bottom:8px; display:flex; flex-wrap:wrap; gap:8px; }
+.message-content { white-space:pre-wrap; line-height:1.5; }
+.message-stack { display:grid; gap:10px; }
+.link-line { color:#335d7e; font-size:12px; margin-top:8px; }
+details { margin-top:8px; }
 summary { cursor:pointer; color:var(--accent); font-size:12px; }
-pre { white-space:pre-wrap; overflow:auto; padding:10px; border-radius:6px; background:#f1f4f7; }
+pre { white-space:pre-wrap; overflow:auto; padding:10px; border-radius:10px; background:#f3f6f9; border:1px solid #e1e7ef; }
 a { color:var(--accent); text-decoration:none; }
 a:hover { text-decoration:underline; }
 .empty { color:var(--muted); padding:18px; }
@@ -360,42 +568,52 @@ a:hover { text-decoration:underline; }
   .coverage, .metrics { margin-left:12px; margin-right:12px; }
   .list { max-height:420px; }
   .detail-head { display:block; }
+  .detail-side { min-width:0; margin-top:12px; }
 }
 </style>
 </head>
 <body>
 <header>
 <h1>Neo4j Threads</h1>
-<p>Interface simples para revisar as threads reconstruidas. Sem classificacao de incivilidade nesta etapa.</p>
+<p>Interface de revisao com foco em navegao por canal, leitura de threads reconstruidas e inspeo visual das relaes inferidas.</p>
 </header>
 <section class="coverage" id="coverage"></section>
 <section class="metrics" id="metrics"></section>
 <main>
 <aside>
 <section class="filters">
-<label>Buscar texto, usuario, keyword ou thread_id
-<input id="query" type="search" placeholder="cypher, USER_001, T_0001">
-</label>
-<label>Tamanho minimo
-<input id="minSize" type="number" min="1" step="1" value="2">
-</label>
-<label>Status
-<select id="status">
-<option value="">todos</option>
-<option value="ok">ok</option>
-<option value="ambiguous">ambiguous</option>
-<option value="needs_review">needs_review</option>
-</select>
-</label>
-<label>Ordenar
-<select id="sort">
-<option value="size">maiores primeiro</option>
-<option value="time">ordem temporal</option>
-<option value="confidence">maior confianca</option>
-<option value="review">revisao primeiro</option>
-</select>
-</label>
+  <div class="filter-grid">
+    <label class="span-2">Buscar texto, usuario, keyword, thread_id ou canal
+      <input id="query" type="search" placeholder="aura, cypher, USER_001, T_0001">
+    </label>
+    <label>Filtrar por canal
+      <select id="channel"></select>
+    </label>
+    <label>Status
+      <select id="status">
+        <option value="">todos</option>
+        <option value="ok">ok</option>
+        <option value="ambiguous">ambiguous</option>
+        <option value="needs_review">needs_review</option>
+      </select>
+    </label>
+    <label>Tamanho minimo
+      <input id="minSize" type="number" min="1" step="1" value="2">
+    </label>
+    <label>Ordenar
+      <select id="sort">
+        <option value="size">maiores primeiro</option>
+        <option value="time">ordem temporal</option>
+        <option value="confidence">maior confianca</option>
+        <option value="review">revisao primeiro</option>
+      </select>
+    </label>
+  </div>
+  <div class="filter-actions">
+    <button id="clearFilters" type="button">limpar filtros</button>
+  </div>
 </section>
+<section class="result-summary" id="resultSummary"></section>
 <section class="list" id="threadList"></section>
 </aside>
 <section class="detail" id="detail"></section>
@@ -411,15 +629,33 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 }
 
+function channelColor(channel) {
+  let hash = 0;
+  for (const ch of String(channel || 'unknown')) {
+    hash = ((hash << 5) - hash) + ch.charCodeAt(0);
+    hash |= 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue} 62% 46%)`;
+}
+
+function badgeChannel(channel) {
+  const accent = channelColor(channel);
+  return `<span class="badge channel-badge" style="--badge-accent:${accent}">${escapeHtml(channel)}</span>`;
+}
+
 function renderCoverage() {
-  const channels = Object.entries(data.coverage.channel_counts).map(([k,v]) => `${escapeHtml(k)}=${fmt.format(v)}`).join(', ');
-  const guilds = Object.entries(data.coverage.guild_counts).map(([k,v]) => `${escapeHtml(k)}=${fmt.format(v)}`).join(', ');
+  const channels = Object.entries(data.coverage.channel_counts)
+    .slice(0, 12)
+    .map(([k, v]) => `${escapeHtml(k)}=${fmt.format(v)}`)
+    .join(', ');
+  const guilds = Object.entries(data.coverage.guild_counts).map(([k, v]) => `${escapeHtml(k)}=${fmt.format(v)}`).join(', ');
   document.getElementById('coverage').innerHTML = `
     <h2>Cobertura dos dados</h2>
     <p><strong>${fmt.format(data.coverage.message_count)}</strong> mensagens no arquivo de entrada para este escopo.</p>
     <p>Periodo: ${escapeHtml(data.coverage.first_message_at)} ate ${escapeHtml(data.coverage.last_message_at)}</p>
     <p>Servidor: ${guilds}</p>
-    <p>Canais: ${channels}</p>
+    <p>Canais com mais volume: ${channels}</p>
     <p>${escapeHtml(data.coverage.note)}</p>
   `;
 }
@@ -441,18 +677,46 @@ function renderMetrics() {
   `).join('');
 }
 
+function initChannelOptions() {
+  const select = document.getElementById('channel');
+  const options = ['<option value="">todos os canais</option>'];
+  for (const [channel, count] of Object.entries(data.coverage.channel_counts)) {
+    options.push(`<option value="${escapeHtml(channel)}">${escapeHtml(channel)} (${fmt.format(count)})</option>`);
+  }
+  select.innerHTML = options.join('');
+}
+
+function renderResultSummary() {
+  const selectedChannel = document.getElementById('channel').value;
+  const totalMessages = filtered.reduce((sum, thread) => sum + thread.message_count, 0);
+  const singletons = filtered.filter(thread => thread.message_count === 1).length;
+  document.getElementById('resultSummary').innerHTML = `
+    <h2>Resultado atual</h2>
+    <p><strong>${fmt.format(filtered.length)}</strong> threads visiveis, <strong>${fmt.format(totalMessages)}</strong> mensagens agregadas e <strong>${fmt.format(singletons)}</strong> singletons neste recorte.</p>
+    <p>Canal ativo: <strong>${escapeHtml(selectedChannel || 'todos os canais')}</strong></p>
+  `;
+}
+
 function applyFilters() {
   const q = document.getElementById('query').value.trim().toLowerCase();
   const minSize = Number(document.getElementById('minSize').value || 1);
   const status = document.getElementById('status').value;
+  const channel = document.getElementById('channel').value;
   const sort = document.getElementById('sort').value;
   filtered = data.threads.filter(thread => {
     const haystack = [
-      thread.thread_id, thread.title, thread.status, thread.keywords.join(' '),
-      thread.participants.join(' '), thread.messages.map(m => m.content).join(' ')
+      thread.thread_id,
+      thread.title,
+      thread.status,
+      thread.primary_channel,
+      thread.channel_names.join(' '),
+      thread.keywords.join(' '),
+      thread.participants.join(' '),
+      thread.messages.map(m => `${m.channel} ${m.content}`).join(' '),
     ].join(' ').toLowerCase();
     return thread.message_count >= minSize
       && (!status || thread.status === status)
+      && (!channel || thread.channel_names.includes(channel))
       && (!q || haystack.includes(q));
   });
   filtered.sort((a, b) => {
@@ -464,6 +728,7 @@ function applyFilters() {
   if (!filtered.some(thread => thread.thread_id === selectedId)) {
     selectedId = filtered[0]?.thread_id ?? null;
   }
+  renderResultSummary();
   renderList();
   renderDetail();
 }
@@ -474,12 +739,36 @@ function renderList() {
     list.innerHTML = '<div class="empty">Nenhuma thread para estes filtros.</div>';
     return;
   }
-  list.innerHTML = filtered.map(thread => `
-    <button class="thread-row ${thread.thread_id === selectedId ? 'active' : ''}" data-thread="${escapeHtml(thread.thread_id)}">
-      <span class="thread-title">${escapeHtml(thread.thread_id)} · ${escapeHtml(thread.title)}</span>
-      <span class="thread-meta">${thread.message_count} msgs · ${thread.participant_count} usuarios · conf. ${thread.avg_confidence.toFixed(2)} · ${escapeHtml(thread.status)}</span>
-    </button>
-  `).join('');
+  list.innerHTML = filtered.map(thread => {
+    const accent = channelColor(thread.primary_channel);
+    const channels = thread.channel_names.slice(0, 2).map(channel => badgeChannel(channel)).join('');
+    const moreChannels = thread.channel_names.length > 2 ? `<span class="badge">+${thread.channel_names.length - 2} canais</span>` : '';
+    const statusBadge = `<span class="badge ${escapeHtml(thread.status)}">${escapeHtml(thread.status)}</span>`;
+    const shapeBadge = `<span class="badge">${escapeHtml(thread.conversation_shape)}</span>`;
+    const multiBadge = thread.multi_channel ? '<span class="badge">multi-canal</span>' : '';
+    const participantPreview = escapeHtml(thread.participants.slice(0, 4).join(', ') || 'n/a');
+    const keywordPreview = escapeHtml(thread.keywords.slice(0, 4).join(', ') || 'n/a');
+    return `
+      <button class="thread-row ${thread.thread_id === selectedId ? 'active' : ''}" data-thread="${escapeHtml(thread.thread_id)}" style="--channel-accent:${accent}">
+        <div class="thread-headline">
+          <span class="thread-id">${escapeHtml(thread.thread_id)}</span>
+          ${channels}${moreChannels}
+        </div>
+        <span class="thread-title">${escapeHtml(thread.title)}</span>
+        <div class="thread-tags">${statusBadge}${shapeBadge}${multiBadge}</div>
+        <div class="thread-meta">
+          <span>${thread.message_count} msgs</span>
+          <span>${thread.participant_count} usuarios</span>
+          <span>conf. ${thread.avg_confidence.toFixed(2)}</span>
+          <span>${escapeHtml(thread.start_time.slice(0, 10))}</span>
+        </div>
+        <div class="thread-submeta">
+          <span>participantes: ${participantPreview}</span>
+          <span>keywords: ${keywordPreview}</span>
+        </div>
+      </button>
+    `;
+  }).join('');
   list.querySelectorAll('.thread-row').forEach(button => {
     button.addEventListener('click', () => {
       selectedId = button.dataset.thread;
@@ -496,6 +785,7 @@ function renderDetail() {
     detail.innerHTML = '<div class="empty">Selecione uma thread.</div>';
     return;
   }
+  const accent = channelColor(thread.primary_channel);
   const badges = [
     `<span class="badge ${escapeHtml(thread.status)}">${escapeHtml(thread.status)}</span>`,
     `<span class="badge">${escapeHtml(thread.conversation_shape)}</span>`,
@@ -503,7 +793,9 @@ function renderDetail() {
     `<span class="badge">inferred ${thread.inferred_edge_count}</span>`,
     `<span class="badge uncertain">uncertain ${thread.uncertain_edge_count}</span>`,
   ].join('');
+  const channelBadges = thread.channel_names.map(channel => badgeChannel(channel)).join('');
   const messages = thread.messages.map(message => {
+    const messageAccent = channelColor(message.channel || thread.primary_channel);
     const link = message.parent_message_id ? `
       <div class="link-line">responde/continua ${escapeHtml(message.parent_message_id)}
       · score ${escapeHtml(message.parent_score)}
@@ -517,33 +809,60 @@ function renderDetail() {
       <details><summary>candidatos alternativos</summary><pre>${escapeHtml(JSON.stringify(message.alternatives, null, 2))}</pre></details>
     ` : '';
     return `
-      <article class="message">
-        <div class="message-meta">#${message.position} · ${escapeHtml(message.author)} · ${escapeHtml(message.timestamp)} · ${escapeHtml(message.message_id)}</div>
+      <article class="message" style="--thread-accent:${messageAccent}">
+        <div class="message-meta">
+          <span>#${message.position}</span>
+          <span>${escapeHtml(message.author)}</span>
+          <span>${badgeChannel(message.channel)}</span>
+          <span>${escapeHtml(message.timestamp)}</span>
+          <span>${escapeHtml(message.message_id)}</span>
+        </div>
         <div class="message-content">${escapeHtml(message.content)}</div>
         ${link}${evidence}${alternatives}
       </article>
     `;
   }).join('');
   detail.innerHTML = `
-    <div class="detail-head">
-      <div>
-        <h2>${escapeHtml(thread.thread_id)} · ${escapeHtml(thread.title)}</h2>
-        <p>${thread.message_count} mensagens · ${thread.participant_count} usuarios · conf. ${thread.avg_confidence.toFixed(2)}</p>
-        <p>${escapeHtml(thread.start_time)} ate ${escapeHtml(thread.end_time)}</p>
-        <p>keywords: ${escapeHtml(thread.keywords.join(', ') || 'n/a')}</p>
-        <p>revisao: ${escapeHtml(thread.needs_review_reasons.join(', ') || 'none')}</p>
-        <p>incivility_label, scd_summary e derailment_risk: not computed yet</p>
-        <div>${badges}</div>
+    <section class="detail-hero" style="--thread-accent:${accent}">
+      <div class="detail-head">
+        <div class="detail-title">
+          <h2>${escapeHtml(thread.thread_id)} · ${escapeHtml(thread.title)}</h2>
+          <p>${thread.message_count} mensagens · ${thread.participant_count} usuarios · conf. ${thread.avg_confidence.toFixed(2)}</p>
+          <p>${escapeHtml(thread.start_time)} ate ${escapeHtml(thread.end_time)}</p>
+          <p>keywords: ${escapeHtml(thread.keywords.join(', ') || 'n/a')}</p>
+          <p>revisao: ${escapeHtml(thread.needs_review_reasons.join(', ') || 'none')}</p>
+          <div>${badges}</div>
+          <div class="thread-channel-strip">${channelBadges}</div>
+        </div>
+        <div class="detail-side">
+          <div class="detail-kpis">
+            <div class="detail-kpi"><span>Canal dominante</span><strong>${escapeHtml(thread.primary_channel)}</strong></div>
+            <div class="detail-kpi"><span>Canais</span><strong>${thread.channel_names.length}</strong></div>
+            <div class="detail-kpi"><span>Root</span><strong>${escapeHtml(thread.root_message_id)}</strong></div>
+            <div class="detail-kpi"><span>Duracao</span><strong>${fmt.format(Math.round(thread.duration_seconds))}s</strong></div>
+          </div>
+          <div><a href="${escapeHtml(thread.detail_url)}">abrir pagina simples da thread</a></div>
+        </div>
       </div>
-      <div><a href="${escapeHtml(thread.detail_url)}">abrir pagina simples da thread</a></div>
-    </div>
-    ${messages}
+    </section>
+    <section class="message-stack">${messages}</section>
   `;
 }
 
-['query', 'minSize', 'status', 'sort'].forEach(id => document.getElementById(id).addEventListener('input', applyFilters));
+function resetFilters() {
+  document.getElementById('query').value = '';
+  document.getElementById('channel').value = '';
+  document.getElementById('status').value = '';
+  document.getElementById('minSize').value = '2';
+  document.getElementById('sort').value = 'size';
+  applyFilters();
+}
+
+['query', 'minSize', 'status', 'sort', 'channel'].forEach(id => document.getElementById(id).addEventListener('input', applyFilters));
+document.getElementById('clearFilters').addEventListener('click', resetFilters);
 renderCoverage();
 renderMetrics();
+initChannelOptions();
 applyFilters();
 </script>
 </body>
@@ -558,18 +877,22 @@ THREAD_DETAIL_TEMPLATE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Thread detail</title>
 <style>
-body { margin:0; font-family:Segoe UI, Arial, sans-serif; background:#f6f8fa; color:#172026; }
-main { max-width:980px; margin:0 auto; padding:22px; }
-section { background:white; border:1px solid #d9e0e6; border-radius:8px; padding:16px; margin-bottom:14px; }
+body { margin:0; font-family:"Trebuchet MS", "Segoe UI", sans-serif; background:#eef3f8; color:#172026; }
+main { max-width:1080px; margin:0 auto; padding:22px; }
+section { background:white; border:1px solid #d9e0e6; border-radius:16px; padding:16px; margin-bottom:14px; box-shadow:0 12px 32px rgba(20, 32, 51, 0.06); }
 h1 { margin:0 0 8px; font-size:24px; }
 h2 { margin:0 0 10px; font-size:18px; }
 p { color:#5f6b76; margin:4px 0; }
-.message { border-left:3px solid #ccd6df; padding:10px 0 10px 12px; margin-bottom:8px; }
-.meta { color:#5f6b76; font-size:12px; margin-bottom:5px; }
-.content { white-space:pre-wrap; line-height:1.45; }
+.hero { position:relative; overflow:hidden; }
+.hero::before { content:""; position:absolute; left:0; top:0; bottom:0; width:8px; background:var(--thread-accent, #2364aa); }
+.hero-inner { padding-left:12px; }
+.badge { display:inline-flex; align-items:center; gap:6px; border:1px solid #d9e0e6; border-radius:999px; padding:4px 10px; font-size:12px; background:#f4f6f8; margin:2px 6px 2px 0; }
+.message { border:1px solid #d9e0e6; border-left:6px solid var(--message-accent, #ccd6df); border-radius:14px; padding:12px 14px; margin-bottom:10px; background:#fff; }
+.meta { color:#5f6b76; font-size:12px; margin-bottom:7px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.content { white-space:pre-wrap; line-height:1.5; }
 table { width:100%; border-collapse:collapse; font-size:13px; }
 th, td { border-bottom:1px solid #d9e0e6; text-align:left; padding:8px; vertical-align:top; }
-pre { white-space:pre-wrap; overflow:auto; background:#f1f4f7; padding:8px; border-radius:6px; }
+pre { white-space:pre-wrap; overflow:auto; background:#f1f4f7; padding:8px; border-radius:8px; }
 </style>
 </head>
 <body>
@@ -579,9 +902,21 @@ const data = __THREAD_DATA__;
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 }
+function channelColor(channel) {
+  let hash = 0;
+  for (const ch of String(channel || 'unknown')) {
+    hash = ((hash << 5) - hash) + ch.charCodeAt(0);
+    hash |= 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue} 62% 46%)`;
+}
+function channelBadge(channel) {
+  return `<span class="badge">${escapeHtml(channel)}</span>`;
+}
 const messages = data.messages.map(message => `
-  <article class="message">
-    <div class="meta">#${message.position} · ${escapeHtml(message.author)} · ${escapeHtml(message.timestamp)} · ${escapeHtml(message.message_id)}</div>
+  <article class="message" style="--message-accent:${channelColor(message.channel)}">
+    <div class="meta">#${message.position} · ${escapeHtml(message.author)} · ${channelBadge(message.channel)} · ${escapeHtml(message.timestamp)} · ${escapeHtml(message.message_id)}</div>
     <div class="content">${escapeHtml(message.content)}</div>
   </article>
 `).join('');
@@ -595,11 +930,15 @@ const links = data.links.length ? data.links.map(link => `
   </tr>
 `).join('') : '<tr><td colspan="5">Sem links internos.</td></tr>';
 document.getElementById('app').innerHTML = `
-  <section>
-    <h1>${escapeHtml(data.thread.thread_id)} · ${escapeHtml(data.thread.title)}</h1>
-    <p>${data.thread.message_count} mensagens · ${data.thread.participant_count} usuarios · conf. ${Number(data.thread.avg_confidence).toFixed(2)}</p>
-    <p>${escapeHtml(data.thread.start_time)} ate ${escapeHtml(data.thread.end_time)}</p>
-    <p>Status: ${escapeHtml(data.thread.status)} · Revisao: ${escapeHtml((data.thread.needs_review_reasons || []).join(', ') || 'none')}</p>
+  <section class="hero" style="--thread-accent:${channelColor(data.thread.primary_channel)}">
+    <div class="hero-inner">
+      <h1>${escapeHtml(data.thread.thread_id)} · ${escapeHtml(data.thread.title)}</h1>
+      <p>${data.thread.message_count} mensagens · ${data.thread.participant_count} usuarios · conf. ${Number(data.thread.avg_confidence).toFixed(2)}</p>
+      <p>${escapeHtml(data.thread.start_time)} ate ${escapeHtml(data.thread.end_time)}</p>
+      <p>Status: ${escapeHtml(data.thread.status)} · Revisao: ${escapeHtml((data.thread.needs_review_reasons || []).join(', ') || 'none')}</p>
+      <p>Canal dominante: ${escapeHtml(data.thread.primary_channel)}</p>
+      <div>${(data.thread.channel_names || []).map(channelBadge).join('')}</div>
+    </div>
   </section>
   <section>
     <h2>Mensagens</h2>

@@ -465,6 +465,23 @@ def calculate_pair_features(
     shared_tech = sorted(set(source.technical_tokens) & set(target.technical_tokens))
     temporal_score = 1.0 / (1.0 + (delta_seconds / 1800.0))
     same_channel = source.channel_id == target.channel_id
+    burst_continuity = 0.0
+    if same_channel:
+        if delta_seconds <= 120:
+            burst_continuity += 0.50
+        elif delta_seconds <= 600:
+            burst_continuity += 0.30
+        elif delta_seconds <= 1800:
+            burst_continuity += 0.12
+        if source.author_id == target.author_id:
+            burst_continuity += 0.25
+        if source_mentions_target or target_mentions_source:
+            burst_continuity += 0.20
+        if source_response > 0:
+            burst_continuity += 0.15
+        if target_question > 0:
+            burst_continuity += 0.15
+    burst_continuity = min(1.0, burst_continuity)
 
     return {
         "delta_seconds": round(delta_seconds, 3),
@@ -504,6 +521,7 @@ def calculate_pair_features(
         "mention_score": round(mention_score, 6),
         "same_native_thread_score": 1.0 if same_native_thread else 0.0,
         "participant_continuity_score": round(participant_continuity, 6),
+        "same_channel_burst_score": round(burst_continuity, 6),
     }
 
 
@@ -519,6 +537,7 @@ def score_pair(features: dict[str, Any]) -> float:
     same_native_thread = float(features.get("same_native_thread_score", 0.0))
     participant = float(features.get("participant_continuity_score", 0.0))
     technical_discussion = float(features.get("technical_discussion_score", 0.0))
+    same_channel_burst = float(features.get("same_channel_burst_score", 0.0))
 
     score = (
         0.30 * semantic_similarity
@@ -528,6 +547,7 @@ def score_pair(features: dict[str, Any]) -> float:
         + 0.10 * question_answer
         + 0.10 * same_native_thread
         + 0.05 * participant
+        + 0.30 * same_channel_burst
     )
     if same_native_thread:
         score += 0.08
@@ -1330,6 +1350,7 @@ def _candidate_evidence(row: dict[str, Any]) -> dict[str, Any]:
         "question_answer_score",
         "same_native_thread_score",
         "participant_continuity_score",
+        "same_channel_burst_score",
         "shared_technical_token_count",
         "technical_discussion_score",
         "shared_url",
@@ -1341,7 +1362,8 @@ def _candidate_evidence(row: dict[str, Any]) -> dict[str, Any]:
     evidence["score_formula"] = (
         "0.30*semantic_similarity + 0.20*temporal_score + 0.15*mention_score "
         "+ 0.10*lexical_overlap + 0.10*question_answer_score "
-        "+ 0.10*same_native_thread_score + 0.05*participant_continuity_score; "
+        "+ 0.10*same_native_thread_score + 0.05*participant_continuity_score "
+        "+ 0.30*same_channel_burst_score; "
         "rules: +0.08 same_native_thread, +0.10 technical_discussion, temporal/semantic penalties"
     )
     return evidence

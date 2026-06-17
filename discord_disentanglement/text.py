@@ -293,6 +293,8 @@ def evidence_labels(evidence: dict[str, object]) -> list[str]:
     labels: list[str] = []
     if float(evidence.get("temporal_score", 0.0) or 0.0) >= 0.6:
         labels.append("tempo")
+    if float(evidence.get("same_channel_burst_score", 0.0) or 0.0) >= 0.45:
+        labels.append("continuidade-local")
     if float(evidence.get("semantic_similarity", 0.0) or 0.0) >= 0.25:
         labels.append("similaridade")
     if float(evidence.get("mention_score", 0.0) or 0.0) > 0:
