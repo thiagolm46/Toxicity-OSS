@@ -89,31 +89,6 @@ SOFTWARE_NEGATIVE_PATTERNS: list[PatternRule] = [
     (re.compile(r"\bmeme(?:s)?\b", re.IGNORECASE), 1, "meme"),
 ]
 
-GAMING_POSITIVE_PATTERNS: list[PatternRule] = [
-    (re.compile(r"\bgaming\b|\bgames?\b", re.IGNORECASE), 5, "gaming"),
-    (re.compile(r"\besports?\b|\be-?sports\b", re.IGNORECASE), 4, "esports"),
-    (
-        re.compile(
-            r"\bminecraft\b|\bvalorant\b|\broblox\b|\bfortnite\b|\bgenshin\b|\bleague of legends\b|\blol\b|\bcs2\b|\bcsgo\b",
-            re.IGNORECASE,
-        ),
-        4,
-        "game title",
-    ),
-    (re.compile(r"\bsteam\b|\bepic games?\b", re.IGNORECASE), 3, "platform"),
-    (re.compile(r"\bclan\b|\bguild\b|\bsquad\b", re.IGNORECASE), 3, "community"),
-    (re.compile(r"\bmod(?:ding)?\b|\baddon\b|\bplugin\b", re.IGNORECASE), 3, "modding"),
-    (re.compile(r"\bstream(?:er|ing)?\b|\btwitch\b", re.IGNORECASE), 2, "streaming"),
-    (re.compile(r"\broleplay\b|\brp\b", re.IGNORECASE), 2, "roleplay"),
-]
-
-GAMING_NEGATIVE_PATTERNS: list[PatternRule] = [
-    (re.compile(r"\bnsfw\b|\b18\+\b", re.IGNORECASE), 6, "nsfw"),
-    (re.compile(r"\bcrypto\b|\bnft\b|\bforex\b|\btrading\b", re.IGNORECASE), 4, "finance/crypto"),
-    (re.compile(r"\bdating\b|\bmatchmaking\b", re.IGNORECASE), 4, "dating"),
-    (re.compile(r"\bgiveaway\b|\bdrops?\b", re.IGNORECASE), 2, "giveaway"),
-]
-
 # Kept for backward compatibility in internal calls and snippets.
 POSITIVE_PATTERNS = SOFTWARE_POSITIVE_PATTERNS
 NEGATIVE_PATTERNS = SOFTWARE_NEGATIVE_PATTERNS
@@ -122,16 +97,10 @@ FILTER_PROFILES: dict[str, dict[str, Any]] = {
     "software": {
         "positive_patterns": SOFTWARE_POSITIVE_PATTERNS,
         "negative_patterns": SOFTWARE_NEGATIVE_PATTERNS,
-        "default_min_positive_score": 6,
+        "default_min_positive_score": 8,
         "default_min_score_margin": 2,
+        "default_max_negative_score": 2,
         "blocked_negative_terms": {"nsfw", "finance/crypto", "game title"},
-    },
-    "gaming": {
-        "positive_patterns": GAMING_POSITIVE_PATTERNS,
-        "negative_patterns": GAMING_NEGATIVE_PATTERNS,
-        "default_min_positive_score": 5,
-        "default_min_score_margin": 1,
-        "blocked_negative_terms": {"nsfw", "finance/crypto", "dating"},
     },
 }
 
@@ -555,6 +524,7 @@ def classify_server(
     positive_patterns: list[PatternRule] | None = None,
     negative_patterns: list[PatternRule] | None = None,
     min_score_margin: int = 1,
+    max_negative_score: int | None = None,
     blocked_negative_labels: set[str] | None = None,
 ) -> dict[str, Any]:
     text = build_search_text(record)
@@ -569,6 +539,7 @@ def classify_server(
     is_selected = (
         positive_score >= min_positive_score
         and score_margin >= min_score_margin
+        and (max_negative_score is None or negative_score <= max_negative_score)
         and not blocked_terms
     )
     keywords = record.get("keywords") or []
@@ -879,6 +850,7 @@ def list_profiles() -> None:
     table.add_column("profile")
     table.add_column("default_min_positive_score", justify="right")
     table.add_column("default_min_score_margin", justify="right")
+    table.add_column("default_max_negative_score", justify="right")
     table.add_column("blocked_negative_terms")
 
     for profile_name in sorted(FILTER_PROFILES):
@@ -888,6 +860,7 @@ def list_profiles() -> None:
             profile_name,
             str(profile_config["default_min_positive_score"]),
             str(profile_config["default_min_score_margin"]),
+            str(profile_config["default_max_negative_score"]),
             blocked_terms,
         )
 
@@ -938,7 +911,7 @@ def select_servers(
     ),
     profile: str = typer.Option(
         "software",
-        help="Perfil de seleção (software ou gaming).",
+        help="Perfil de seleção. Este pacote de replicação usa o perfil software.",
     ),
     min_positive_score: int | None = typer.Option(
         None,
@@ -949,6 +922,11 @@ def select_servers(
         None,
         min=0,
         help="Diferença mínima entre positive_score e negative_score.",
+    ),
+    max_negative_score: int | None = typer.Option(
+        None,
+        min=0,
+        help="Pontuação negativa máxima permitida para selecionar um servidor.",
     ),
     positive_regex: list[str] | None = typer.Option(
         None,
@@ -983,6 +961,11 @@ def select_servers(
         if min_score_margin is not None
         else int(profile_config["default_min_score_margin"])
     )
+    effective_max_negative_score = (
+        max_negative_score
+        if max_negative_score is not None
+        else int(profile_config["default_max_negative_score"])
+    )
 
     positive_patterns = list(profile_config["positive_patterns"])
     negative_patterns = list(profile_config["negative_patterns"])
@@ -1012,6 +995,7 @@ def select_servers(
             positive_patterns=positive_patterns,
             negative_patterns=negative_patterns,
             min_score_margin=effective_min_score_margin,
+            max_negative_score=effective_max_negative_score,
             blocked_negative_labels=blocked_negative_terms,
         )
         for record in metadata
@@ -1034,7 +1018,8 @@ def select_servers(
     console.print(
         "[green]Regra de seleção:[/green] "
         f"min_positive_score={effective_min_positive_score}, "
-        f"min_score_margin={effective_min_score_margin}"
+        f"min_score_margin={effective_min_score_margin}, "
+        f"max_negative_score={effective_max_negative_score}"
     )
     console.print(
         f"[green]Servidores selecionados:[/green] {len(selected):,} de {len(frame):,} registros avaliados."
@@ -1066,8 +1051,8 @@ def extract_messages(
         help="Parquet de saída com as mensagens filtradas.",
     ),
     exclude_bots: bool = typer.Option(
-        False,
-        help="Quando ativado, remove mensagens enviadas por bots.",
+        True,
+        help="Remove mensagens enviadas por bots. Use --no-exclude-bots para manter bots.",
     ),
     batch_size: int = typer.Option(
         50_000,
@@ -1153,8 +1138,8 @@ def extract_messages_remote(
         help="Caminho remoto no dataset do Hugging Face.",
     ),
     exclude_bots: bool = typer.Option(
-        False,
-        help="Quando ativado, remove mensagens enviadas por bots.",
+        True,
+        help="Remove mensagens enviadas por bots. Use --no-exclude-bots para manter bots.",
     ),
     batch_size: int = typer.Option(
         50_000,
