@@ -173,7 +173,10 @@ def coerce_text(value: object) -> str:
 def extract_url_hosts(text: str) -> list[str]:
     hosts: list[str] = []
     for match in URL_RE.finditer(text):
-        host = urlparse(match.group(0)).netloc.lower()
+        try:
+            host = urlparse(match.group(0)).netloc.lower()
+        except ValueError:
+            continue
         if host and host not in hosts:
             hosts.append(host)
     return hosts

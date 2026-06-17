@@ -7,6 +7,10 @@ disentanglement do servidor `Neo4j` e a interface estatica de inspecao humana ge
 data/processed/neo4j_threads/reports/neo4j_threads.html
 ```
 
+Para o historico incremental de implementacao da funcionalidade, incluindo os exemplos sinteticos
+iniciais e as decisoes de desenvolvimento tomadas ao longo do processo, ver
+[DISENTANGLEMENT_DEVELOPMENT_PROCESS.md](./DISENTANGLEMENT_DEVELOPMENT_PROCESS.md).
+
 O objetivo desta etapa nao e classificar incivilidade, toxicidade ou derailment. O objetivo
 e transformar um fluxo bruto de mensagens do Discord em threads candidatas, auditaveis e
 faceis de revisar manualmente.

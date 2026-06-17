@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import math
 from collections import Counter, defaultdict
@@ -156,12 +157,12 @@ def run_pipeline(config: DisentanglementConfig) -> dict[str, Path]:
         output_path=reports_dir / "neo4j_threads_summary.md",
     )
     if config.export_neo4j:
-        write_neo4j_cypher(
+        write_neo4j_exports(
             messages=messages,
             threads=threads,
             graph_edges=graph_edges,
             thread_by_message=thread_by_message,
-            output_path=exports_dir / "neo4j_import.cypher",
+            output_dir=exports_dir,
         )
 
     return {
@@ -176,6 +177,12 @@ def run_pipeline(config: DisentanglementConfig) -> dict[str, Path]:
         "thread_summaries": out_dir / "thread_summaries.csv",
         "html_report": reports_dir / "neo4j_threads.html",
         "summary": reports_dir / "neo4j_threads_summary.md",
+        "neo4j_users": exports_dir / "neo4j_users.csv",
+        "neo4j_threads": exports_dir / "neo4j_threads.csv",
+        "neo4j_messages": exports_dir / "neo4j_messages.csv",
+        "neo4j_authored": exports_dir / "neo4j_authored_relationships.csv",
+        "neo4j_belongs_to": exports_dir / "neo4j_belongs_to_relationships.csv",
+        "neo4j_replies_to": exports_dir / "neo4j_replies_to_relationships.csv",
         "cypher": exports_dir / "neo4j_import.cypher",
     }
 
@@ -961,51 +968,162 @@ def write_graph_exports(graph: nx.DiGraph, out_dir: Path) -> None:
     (out_dir / "graph.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def write_neo4j_cypher(
+def write_neo4j_exports(
     messages: list[MessageRecord],
     threads: list[ThreadRecord],
     graph_edges: list[EdgeRecord],
     thread_by_message: dict[str, str],
-    output_path: Path,
+    output_dir: Path,
 ) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    users_path = output_dir / "neo4j_users.csv"
+    threads_path = output_dir / "neo4j_threads.csv"
+    messages_path = output_dir / "neo4j_messages.csv"
+    authored_path = output_dir / "neo4j_authored_relationships.csv"
+    belongs_to_path = output_dir / "neo4j_belongs_to_relationships.csv"
+    replies_to_path = output_dir / "neo4j_replies_to_relationships.csv"
+    output_path = output_dir / "neo4j_import.cypher"
+
+    user_ids = sorted({message.author_anon or "USER_UNKNOWN" for message in messages})
+    with users_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["user_id"])
+        writer.writeheader()
+        for user_id in user_ids:
+            writer.writerow({"user_id": user_id})
+
+    with threads_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["thread_id", "title", "status", "avg_confidence"],
+        )
+        writer.writeheader()
+        for thread in threads:
+            writer.writerow(
+                {
+                    "thread_id": thread.thread_id,
+                    "title": thread.title,
+                    "status": thread.status,
+                    "avg_confidence": thread.avg_confidence,
+                }
+            )
+
+    with messages_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "message_id",
+                "author_id",
+                "thread_id",
+                "timestamp",
+                "content",
+                "channel_name",
+                "guild_name",
+                "has_attachment",
+                "has_code_block",
+                "has_url",
+                "code_or_error_marker",
+            ],
+        )
+        writer.writeheader()
+        for message in messages:
+            writer.writerow(
+                {
+                    "message_id": message.message_id,
+                    "author_id": message.author_anon or "USER_UNKNOWN",
+                    "thread_id": thread_by_message.get(message.message_id, "T_UNASSIGNED"),
+                    "timestamp": message.timestamp_iso,
+                    "content": message.content_normalized,
+                    "channel_name": message.channel_name or "",
+                    "guild_name": message.guild_name or message.guild_id or "",
+                    "has_attachment": str(bool(message.has_attachment)).lower(),
+                    "has_code_block": str(bool(message.has_code_block)).lower(),
+                    "has_url": str(bool(message.has_url)).lower(),
+                    "code_or_error_marker": str(bool(message.code_or_error_marker)).lower(),
+                }
+            )
+
+    with authored_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["user_id", "message_id"])
+        writer.writeheader()
+        for message in messages:
+            writer.writerow(
+                {
+                    "user_id": message.author_anon or "USER_UNKNOWN",
+                    "message_id": message.message_id,
+                }
+            )
+
+    with belongs_to_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["message_id", "thread_id"])
+        writer.writeheader()
+        for message in messages:
+            writer.writerow(
+                {
+                    "message_id": message.message_id,
+                    "thread_id": thread_by_message.get(message.message_id, "T_UNASSIGNED"),
+                }
+            )
+
+    with replies_to_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["source_message_id", "target_message_id", "confidence", "method", "edge_type"],
+        )
+        writer.writeheader()
+        for edge in graph_edges:
+            writer.writerow(
+                {
+                    "source_message_id": edge.source_message_id,
+                    "target_message_id": edge.target_message_id,
+                    "confidence": edge.confidence,
+                    "method": edge.method,
+                    "edge_type": edge.edge_type,
+                }
+            )
+
     lines = [
         "CREATE CONSTRAINT user_id IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE;",
         "CREATE CONSTRAINT message_id IF NOT EXISTS FOR (m:Message) REQUIRE m.id IS UNIQUE;",
         "CREATE CONSTRAINT thread_id IF NOT EXISTS FOR (t:Thread) REQUIRE t.id IS UNIQUE;",
         "",
+        "// Copie os CSVs deste diretório para a pasta import/ do Neo4j antes de executar este script.",
+        "LOAD CSV WITH HEADERS FROM 'file:///neo4j_users.csv' AS row",
+        "MERGE (u:User {id: row.user_id});",
+        "",
+        "LOAD CSV WITH HEADERS FROM 'file:///neo4j_threads.csv' AS row",
+        "MERGE (t:Thread {id: row.thread_id})",
+        "SET t.title = row.title,",
+        "    t.status = row.status,",
+        "    t.avg_confidence = toFloat(row.avg_confidence);",
+        "",
+        "LOAD CSV WITH HEADERS FROM 'file:///neo4j_messages.csv' AS row",
+        "MERGE (m:Message {id: row.message_id})",
+        "SET m.timestamp = datetime(row.timestamp),",
+        "    m.content = row.content,",
+        "    m.channel_name = row.channel_name,",
+        "    m.guild_name = row.guild_name,",
+        "    m.has_attachment = toBoolean(row.has_attachment),",
+        "    m.has_code_block = toBoolean(row.has_code_block),",
+        "    m.has_url = toBoolean(row.has_url),",
+        "    m.code_or_error_marker = toBoolean(row.code_or_error_marker);",
+        "",
+        "LOAD CSV WITH HEADERS FROM 'file:///neo4j_authored_relationships.csv' AS row",
+        "MATCH (u:User {id: row.user_id}), (m:Message {id: row.message_id})",
+        "MERGE (u)-[:AUTHORED]->(m);",
+        "",
+        "LOAD CSV WITH HEADERS FROM 'file:///neo4j_belongs_to_relationships.csv' AS row",
+        "MATCH (m:Message {id: row.message_id}), (t:Thread {id: row.thread_id})",
+        "MERGE (m)-[:BELONGS_TO]->(t);",
+        "",
+        "LOAD CSV WITH HEADERS FROM 'file:///neo4j_replies_to_relationships.csv' AS row",
+        "MATCH (s:Message {id: row.source_message_id}), (t:Message {id: row.target_message_id})",
+        "MERGE (s)-[r:REPLIES_TO]->(t)",
+        "SET r.confidence = toFloat(row.confidence),",
+        "    r.method = row.method,",
+        "    r.edge_type = row.edge_type;",
+        "",
     ]
-    for thread in threads:
-        lines.append(
-            f"MERGE (t:Thread {{id: {_cypher(thread.thread_id)}}}) "
-            f"SET t.title = {_cypher(thread.title)}, "
-            f"t.status = {_cypher(thread.status)}, "
-            f"t.avg_confidence = {thread.avg_confidence};"
-        )
-    for message in messages:
-        author = message.author_anon or "USER_UNKNOWN"
-        thread_id = thread_by_message.get(message.message_id, "T_UNASSIGNED")
-        lines.extend(
-            [
-                f"MERGE (u:User {{id: {_cypher(author)}}});",
-                f"MERGE (m:Message {{id: {_cypher(message.message_id)}}}) "
-                f"SET m.timestamp = datetime({_cypher(message.timestamp_iso)}), "
-                f"m.content = {_cypher(message.content_normalized)}, "
-                f"m.channel_name = {_cypher(message.channel_name or '')};",
-                f"MATCH (u:User {{id: {_cypher(author)}}}), (m:Message {{id: {_cypher(message.message_id)}}}) "
-                "MERGE (u)-[:AUTHORED]->(m);",
-                f"MATCH (m:Message {{id: {_cypher(message.message_id)}}}), (t:Thread {{id: {_cypher(thread_id)}}}) "
-                "MERGE (m)-[:BELONGS_TO]->(t);",
-            ]
-        )
-    for edge in graph_edges:
-        lines.append(
-            f"MATCH (s:Message {{id: {_cypher(edge.source_message_id)}}}), "
-            f"(t:Message {{id: {_cypher(edge.target_message_id)}}}) "
-            "MERGE (s)-[r:REPLIES_TO]->(t) "
-            f"SET r.confidence = {edge.confidence}, "
-            f"r.method = {_cypher(edge.method)}, "
-            f"r.edge_type = {_cypher(edge.edge_type)};"
-        )
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -1247,7 +1365,3 @@ def _root_message_id(component: list[MessageRecord], internal_edges: list[EdgeRe
         if message.message_id not in child_ids:
             return message.message_id
     return component[0].message_id
-
-
-def _cypher(value: object) -> str:
-    return json.dumps("" if value is None else str(value), ensure_ascii=False)

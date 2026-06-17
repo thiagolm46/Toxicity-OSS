@@ -41,7 +41,15 @@ Arquivos gerados:
 - `reports/neo4j_threads.html`
 - `reports/neo4j_threads_summary.md`
 - `reports/thread_graphs/T_0001.html` etc. com paginas simples por thread
+- `exports/neo4j_users.csv`
+- `exports/neo4j_threads.csv`
+- `exports/neo4j_messages.csv`
+- `exports/neo4j_authored_relationships.csv`
+- `exports/neo4j_belongs_to_relationships.csv`
+- `exports/neo4j_replies_to_relationships.csv`
 - `exports/neo4j_import.cypher`
+
+Para visualizar o grafo diretamente no Neo4j, copie os arquivos `exports/neo4j_*.csv` para a pasta `import/` da sua instância Neo4j e execute o script `exports/neo4j_import.cypher` no Neo4j Browser. Isso cria nós `:User`, `:Message`, `:Thread` e relações `:AUTHORED`, `:BELONGS_TO` e `:REPLIES_TO` para exploração do grafo no Browser ou Bloom.
 
 Para abrir o explorer local simplificado sem depender de Streamlit:
 
@@ -175,6 +183,7 @@ O score automático atual é uma triagem baseada em conteúdo e metadados do can
 - [docs/methodology/FILTERING_FINDINGS.md](docs/methodology/FILTERING_FINDINGS.md): achados da filtragem de servidores com o corte atual.
 - [docs/methodology/CHANNEL_SELECTION_PROTOCOL.md](docs/methodology/CHANNEL_SELECTION_PROTOCOL.md): protocolo de seleção e validação de canais.
 - [docs/methodology/NEO4J_DISENTANGLEMENT_INTERFACE_METHODOLOGY.md](docs/methodology/NEO4J_DISENTANGLEMENT_INTERFACE_METHODOLOGY.md): metodologia do disentanglement e da interface de inspecao do Neo4j.
+- [docs/methodology/DISENTANGLEMENT_DEVELOPMENT_PROCESS.md](docs/methodology/DISENTANGLEMENT_DEVELOPMENT_PROCESS.md): historico de desenvolvimento da funcionalidade de disentanglement, com exemplos iniciais e decisoes de implementacao.
 - [docs/research/](docs/research/): notas de fundamentação teórica que não são necessárias para executar o pipeline.
 
 ## Uso programático (sem flags)

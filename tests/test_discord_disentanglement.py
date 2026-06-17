@@ -17,6 +17,7 @@ from discord_disentanglement.pipeline import (
     run_pipeline,
     score_pair,
 )
+from discord_disentanglement.text import extract_url_hosts
 
 
 def synthetic_messages() -> list[dict[str, object]]:
@@ -265,6 +266,12 @@ def test_graph_threads_and_pipeline_outputs(tmp_path: Path) -> None:
         "graph.json",
         "reports/neo4j_threads.html",
         "reports/neo4j_threads_summary.md",
+        "exports/neo4j_users.csv",
+        "exports/neo4j_threads.csv",
+        "exports/neo4j_messages.csv",
+        "exports/neo4j_authored_relationships.csv",
+        "exports/neo4j_belongs_to_relationships.csv",
+        "exports/neo4j_replies_to_relationships.csv",
         "exports/neo4j_import.cypher",
     ]
     for relative in expected:
@@ -287,6 +294,16 @@ def test_graph_threads_and_pipeline_outputs(tmp_path: Path) -> None:
     assert "Neo4j Threads" in html
     assert "Cobertura dos dados" in html
     assert "incivility_label" in html
+
+    cypher = (out_dir / "exports" / "neo4j_import.cypher").read_text(encoding="utf-8")
+    assert "LOAD CSV WITH HEADERS FROM 'file:///neo4j_messages.csv'" in cypher
+    assert "MERGE (s)-[r:REPLIES_TO]->(t)" in cypher
+
+
+def test_extract_url_hosts_skips_malformed_ipv6_urls() -> None:
+    text = "valid https://example.com/path broken http://[oops"
+
+    assert extract_url_hosts(text) == ["example.com"]
 
 
 def test_build_graph_and_extract_threads_directly(tmp_path: Path) -> None:

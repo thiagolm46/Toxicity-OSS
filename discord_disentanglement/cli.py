@@ -88,7 +88,7 @@ def run(
     export_neo4j: bool = typer.Option(
         True,
         "--export-neo4j/--no-export-neo4j",
-        help="Gerar exports/neo4j_import.cypher sem conectar ao banco.",
+        help="Gerar CSVs e exports/neo4j_import.cypher para importar o grafo no Neo4j.",
     ),
 ) -> None:
     config = DisentanglementConfig(
