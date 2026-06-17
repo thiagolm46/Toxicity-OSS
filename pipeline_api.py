@@ -23,6 +23,7 @@ class SelectionConfig:
     profile: str = "software"
     min_positive_score: int | None = None
     min_score_margin: int | None = None
+    max_negative_score: int | None = None
     positive_regex: list[str] = field(default_factory=list)
     negative_regex: list[str] = field(default_factory=list)
     positive_regex_weight: int = 2
@@ -36,7 +37,7 @@ class ExtractLocalConfig:
     dataset_path: Path | None = None
     selected_servers_path: Path | None = None
     output_parquet: Path | None = None
-    exclude_bots: bool = False
+    exclude_bots: bool = True
     batch_size: int = 50_000
     include_channel_regex: list[str] = field(default_factory=list)
     exclude_channel_regex: list[str] = field(default_factory=list)
@@ -47,7 +48,7 @@ class ExtractRemoteConfig:
     selected_servers_path: Path | None = None
     output_parquet: Path | None = None
     remote_path: str = pipeline_cli.DATASET_REMOTE_PATH
-    exclude_bots: bool = False
+    exclude_bots: bool = True
     batch_size: int = 50_000
     download_chunk_mb: int = 8
     include_channel_regex: list[str] = field(default_factory=list)
@@ -99,6 +100,7 @@ class DiscordUnveiledPipeline:
             profile=cfg.profile,
             min_positive_score=cfg.min_positive_score,
             min_score_margin=cfg.min_score_margin,
+            max_negative_score=cfg.max_negative_score,
             positive_regex=cfg.positive_regex or None,
             negative_regex=cfg.negative_regex or None,
             positive_regex_weight=cfg.positive_regex_weight,

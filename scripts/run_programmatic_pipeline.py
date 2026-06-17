@@ -32,8 +32,9 @@ def main() -> None:
     pipeline.select_servers(
         SelectionConfig(
             profile="software",
-            min_positive_score=6,
+            min_positive_score=8,
             min_score_margin=2,
+            max_negative_score=2,
         )
     )
 
@@ -42,8 +43,6 @@ def main() -> None:
             selected_servers_path=paths.selected_servers_parquet,
             output_parquet=paths.messages_parquet,
             exclude_bots=True,
-            include_channel_regex=[r"dev|help|code|backend|frontend"],
-            exclude_channel_regex=[r"off-topic|meme|music"],
         )
     )
 

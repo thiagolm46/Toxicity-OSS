@@ -26,6 +26,8 @@ Por isso, o pipeline deve usar nomes de canais apenas como sinal inicial. A deci
 
 ## Protocolo em cinco etapas
 
+O protocolo abaixo descreve a versão metodológica desejada para a dissertação. O pipeline atual já implementa metadados, evidências lexicais, evidências OSS e classificação A/B/C/D. A etapa de modelagem semântica com `SemanticTopicScore` ainda deve ser implementada antes de ser tratada como resultado final.
+
 ### 1. Filtro por metadados
 
 Coletar e manter, quando disponível:
@@ -62,14 +64,18 @@ Para cada canal candidato, calcular sinais objetivos no conteúdo:
 No código atual, essa etapa é implementada pelo comando:
 
 ```powershell
-.\.venv\Scripts\uv.exe run python main.py score-channels --min-messages 50
+.\.venv\Scripts\python.exe main.py score-channels --min-messages 50
 ```
 
 O comando gera `data/processed/software_channels.parquet` e `data/processed/software_channels.json` com scores, contagens de evidências, classe sugerida e marcação de revisão manual.
 
+Filtros por nome de canal, como `include_channel_regex`, devem ser usados apenas em testes operacionais ou execuções exploratórias. Na metodologia final, a extração deve ser ampla o suficiente para não excluir canais técnicos com nomes genéricos, como `general` ou `python-general`. A triagem temática deve acontecer depois, por score de canais, modelagem semântica e validação manual.
+
 ### 3. Modelagem semântica de tópicos
 
 Para a dissertação, a etapa mais forte é complementar o score lexical com modelagem semântica. A estratégia recomendada é criar documentos por canal usando blocos temporais ou blocos de N mensagens. Conversas disentangled são melhores para contexto, mas mais caras e não são obrigatórias para classificar canais.
+
+Esta etapa não deve ser descrita como já implementada enquanto o pipeline não calcular `SemanticTopicScore`. Até lá, o método implementado deve ser descrito como versão operacional baseada em metadados, evidências lexicais e evidências OSS.
 
 Fluxo recomendado:
 
@@ -94,7 +100,7 @@ Para a análise principal de incivilidade, a recomendação é focar na classe A
 
 ### 5. Validação manual
 
-A validação manual é essencial para transformar a seleção em procedimento científico. Recomenda-se selecionar uma amostra estratificada de canais, pedir que dois avaliadores classifiquem independentemente, calcular concordância e resolver divergências por consenso.
+A validação manual é essencial para transformar a seleção em procedimento científico e deve ser tratada como etapa obrigatória da metodologia final. A classificação automática dos canais não deve ser assumida como verdade final. Uma amostra estratificada de canais das classes A, B, C e D deve ser avaliada por dois anotadores independentes, com cálculo de concordância e resolução de divergências por consenso.
 
 Métricas recomendadas:
 
@@ -103,6 +109,10 @@ Métricas recomendadas:
 - precisão da classificação automática
 - recall da classificação automática
 - F1-score
+
+Formulação recomendada:
+
+> A classificação automática dos canais não será assumida como verdade final. Uma amostra estratificada de canais das classes A, B, C e D será avaliada manualmente por dois anotadores independentes. A concordância será medida por Cohen's Kappa, e divergências serão resolvidas por consenso. A partir dessa validação, serão reportadas precisão, recall e F1-score da classificação automática, especialmente para a classe A.
 
 ## Score recomendado para a dissertação
 
@@ -126,7 +136,90 @@ Critério de decisão sugerido:
 
 Os pesos podem ser ajustados após piloto. O importante é manter uma regra explícita e reportar como ela foi calibrada.
 
+### Justificativa metodológica da formação do score
+
+A formação do score deve ser apresentada como uma operacionalização de um construto latente: o grau em que um canal funciona como espaço central de prática, suporte, manutenção, coordenação ou governança de software. Como esse construto não é observável diretamente, ele é aproximado por indicadores complementares.
+
+`MetadataScore` mede a finalidade declarada do canal por meio de nome, categoria e descrição. `LexicalEvidenceScore` mede a prática discursiva efetivamente observada no conteúdo do canal. `SemanticTopicScore` mede o tema predominante em nível semântico, reduzindo a dependência de keywords isoladas. `OSSEvidenceScore` mede o vínculo do canal com artefatos e fluxos concretos de desenvolvimento, como repositórios, issues, PRs e releases.
+
+Essa decomposição segue uma lógica de triangulação metodológica. Em vez de depender de um único tipo de evidência, o método combina intenção declarada, uso observado, tema predominante e ligação com ecossistemas reais de software. Isso fortalece a validade de construto e reduz a probabilidade de classificação baseada em rótulos superficiais.
+
+### Justificativa dos pesos
+
+Os pesos refletem uma prioridade teórica: quanto mais próximo o indicador estiver da atividade efetivamente desempenhada no canal, maior deve ser sua influência no score final.
+
+Por isso, `MetadataScore` recebe peso moderado, pois é útil, mas sujeito a ambiguidade. `LexicalEvidenceScore` recebe peso alto porque deriva do conteúdo observado. `SemanticTopicScore` recebe o maior peso na formulação final porque representa a estrutura temática predominante do canal com maior robustez semântica. `OSSEvidenceScore` recebe peso complementar porque reforça a ligação com a prática de desenvolvimento, mas não basta sozinho para definir centralidade técnica.
+
+Em termos metodológicos, a distribuição de pesos desloca a decisão de sinais superficiais para sinais mais próximos do construto que se deseja medir.
+
+### Justificativa dos limiares e da classificação
+
+Os limiares `>= 0.70`, `0.50-0.69` e `< 0.50` representam, respectivamente, zonas de alta confiança, ambiguidade substantiva e baixa evidência. A existência de uma faixa intermediária é importante porque transforma a incerteza em parte explícita do método, em vez de forçar todos os casos a uma decisão binária automática.
+
+As classes A, B, C e D têm papéis analíticos distintos. A classe A reúne canais com alta confiança de centralidade técnica e compõe a amostra principal. A classe B reúne canais tecnicamente plausíveis, mas periféricos ou ambíguos, úteis para revisão manual e análise secundária. A classe C representa irrelevância temática para o foco principal do estudo. A classe D representa irrelevância funcional, isto é, canais administrativos, automatizados, normativos ou não conversacionais.
+
+Essa distinção entre irrelevância temática e irrelevância funcional é importante para estudos em Discord, porque alguns canais podem conter linguagem técnica ocasional, mas não funcionar como espaços reais de interação técnica entre participantes.
+
+### Justificativa da versão operacional atual
+
+No pipeline atual, a fórmula operacional é mais simples:
+
+```text
+software_channel_score =
+    0.20 * metadata_score +
+    0.60 * lexical_evidence_score +
+    0.20 * oss_evidence_score
+```
+
+Essa configuração prioriza o conteúdo observado porque ela procura evitar dois erros recorrentes: excluir canais tecnicamente relevantes com nomes genéricos, como `general`, e incluir canais com nomes técnicos, mas conteúdo pouco relevante. Trata-se de uma formulação operacional inicial, adequada para triagem, mas ainda aberta a calibração empírica.
+
+### Plano de calibração e validação
+
+Para justificar a formação dos scores de modo plenamente defensável, recomenda-se um plano explícito de calibração:
+
+1. construir uma amostra de canais rotulada manualmente;
+2. testar combinações alternativas de pesos e limiares;
+3. comparar precisão, recall e F1, sobretudo para a classe A;
+4. realizar análise de sensibilidade e, quando possível, ablação dos componentes do score;
+5. fixar a configuração final antes da análise principal de incivilidade.
+
+Assim, a formação dos scores é apresentada como combinação de fundamentação teórica, operacionalização explícita e validação empírica, e não como escolha arbitrária.
+
 O comando `score-channels` implementa uma versão operacional inicial sem `SemanticTopicScore`, usando mais peso nas evidências do conteúdo para evitar excluir canais tecnicamente relevantes chamados `#general`. A versão final da dissertação deve incorporar BERTopic ou outra modelagem semântica e registrar a validação manual.
+
+### Lógica dos algoritmos usados
+
+A etapa implementada atualmente é baseada em algoritmos interpretáveis:
+
+| Algoritmo ou técnica            | Como funciona no pipeline                                                              | Por que foi escolhido                                                    |
+| ------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Expressões regulares ponderadas | Identificam termos técnicos, sinais sociais, sinais administrativos, links e artefatos | São auditáveis e adequadas para triagem inicial                          |
+| Soma ponderada                  | Combina componentes normalizados em `software_channel_score`                           | Permite explicitar a importância relativa de cada evidência              |
+| Normalização por saturação      | Limita cada sinal ao intervalo `0-1` após atingir uma proporção mínima de mensagens    | Reduz viés de volume e enfatiza predominância temática                   |
+| Regras A/B/C/D                  | Aplicam limiares e condições sobre score global, densidade lexical e sinais negativos  | Produzem classes interpretáveis para revisão manual                      |
+| SBERT                           | Representa blocos de mensagens como embeddings semânticos                              | Permite comparar blocos por similaridade sem depender apenas de keywords |
+| BERTopic                        | Agrupa embeddings e usa c-TF-IDF para extrair descritores de tópicos                   | Ajuda a identificar temas predominantes e interpretar canais ambíguos    |
+
+A escolha por métodos interpretáveis na seleção do corpus é deliberada. Nesta fase, o objetivo não é maximizar performance preditiva a qualquer custo, mas construir uma amostra defensável, auditável e validável. Modelos mais complexos podem ser incorporados na etapa semântica, desde que seus resultados sejam comparados com a validação manual.
+
+## Fluxo final recomendado
+
+Para a versão final da dissertação, o processo completo deve ser descrito como:
+
+1. Filtragem ampla de servidores candidatos.
+2. Remoção ou revisão de falsos positivos evidentes.
+3. Classificação do tipo de servidor: projeto OSS, ecossistema OSS, comunidade técnica ampla ou caso ruidoso.
+4. Extração ampla de canais textuais dos servidores candidatos.
+5. Remoção de bots e canais não textuais, administrativos ou evidentemente sociais.
+6. Cálculo de `MetadataScore`, `LexicalEvidenceScore` e `OSSEvidenceScore`.
+7. Criação de blocos de mensagens por canal.
+8. Modelagem semântica de tópicos com embeddings/SBERT e BERTopic, se implementada.
+9. Cálculo do `SoftwareChannelScore` final.
+10. Classificação dos canais em A/B/C/D.
+11. Validação manual com dois avaliadores e métricas de concordância/desempenho.
+12. Definição da amostra final de canais técnicos para análise de incivilidade.
+
+Se a etapa semântica ainda não estiver implementada, o texto deve apresentar o `SemanticTopicScore` como extensão planejada e usar a fórmula operacional atual para os resultados reportados.
 
 ## Papel do disentanglement
 

@@ -1,5 +1,61 @@
 # Discord-Unveiled Software Filter
 
+## Conversation disentanglement do canal Neo4J
+
+O pacote `discord_disentanglement` implementa uma primeira versao do pipeline de reconstrucao de threads para exports JSON/CSV do Discord. Ele filtra o canal `Neo4J`, anonimiza usuarios, extrai replies explicitos, cria candidatos mensagem->mensagem, calcula features auditaveis, aplica um baseline heuristico, constroi um grafo conversacional e exporta relatorios para revisao humana.
+
+Comando principal:
+
+```powershell
+.\.venv\Scripts\python.exe -m discord_disentanglement run `
+  --input data/raw/discord_export.json `
+  --channel-name Neo4J `
+  --out data/processed/neo4j_threads `
+  --threshold 0.50
+```
+
+Tambem aceita CSV:
+
+```powershell
+.\.venv\Scripts\python.exe -m discord_disentanglement run `
+  --input data/raw/discord_export.csv `
+  --channel-name Neo4J `
+  --out data/processed/neo4j_threads
+```
+
+Arquivos gerados:
+
+- `messages_normalized.csv`
+- `edges_explicit.csv`
+- `candidate_pairs.csv`
+- `edges_inferred.csv`
+- `graph_edges.csv`
+- `graph.graphml`
+- `graph.json`
+- `threads.csv`
+- `threads.json`
+- `thread_messages.csv`
+- `thread_summaries.csv`
+- `annotation_review.csv`
+- `reports/neo4j_threads.html`
+- `reports/neo4j_threads_summary.md`
+- `reports/thread_graphs/T_0001.html` etc.
+- `exports/neo4j_import.cypher`
+
+Para abrir o explorer local sem depender de Streamlit:
+
+```powershell
+.\.venv\Scripts\python.exe apps/thread_explorer.py --data data/processed/neo4j_threads
+```
+
+Ou servir os HTMLs localmente:
+
+```powershell
+.\.venv\Scripts\python.exe apps/thread_explorer.py --data data/processed/neo4j_threads --serve --port 8501
+```
+
+Campos de incivilidade ainda nao sao calculados. `thread_summaries.csv` ja inclui `scd_summary`, `incivility_label` e `derailment_risk` vazios para a proxima etapa.
+
 Este projeto filtra servidores candidatos do dataset [SaisExperiments/Discord-Unveiled-Compressed](https://huggingface.co/datasets/SaisExperiments/Discord-Unveiled-Compressed) que parecem ser relacionados a programação, desenvolvimento, engenharia de software e ferramentas open source. Depois disso, extrai mensagens, pontua canais textuais por evidencias tecnicas e registra views em DuckDB.
 
 A unidade final de inclusao da pesquisa deve ser **servidor valido de SE/OSS + canal valido de software**. Isso evita tratar todo canal de um servidor tecnico como automaticamente relevante para engenharia de software.
@@ -7,7 +63,7 @@ A unidade final de inclusao da pesquisa deve ser **servidor valido de SE/OSS + c
 ## O que o pipeline faz
 
 1. Baixa `server_metadata/servers_metadata.txt` do Hugging Face.
-2. Classifica servidores com heurísticas de palavras-chave positivas e negativas usando perfis dinâmicos (`software` ou `gaming`).
+2. Classifica servidores candidatos de SE/OSS com heurísticas de palavras-chave positivas e negativas usando o perfil `software`.
 3. Salva os servidores selecionados em Parquet e JSON para revisão.
 4. Lê `dataset.zst`, que é um `tar.zst` com arquivos `./<guild_id>.json`, e extrai só os servidores selecionados.
 5. Salva as mensagens filtradas em Parquet.
@@ -38,21 +94,21 @@ uv run python main.py score-channels
 uv run python main.py init-duckdb
 ```
 
-Se o `uv` não estiver no `PATH`, use o binário local da `.venv`:
+Se o `uv` não estiver no `PATH`, use o Python local da `.venv`:
 
 ```powershell
-.\.venv\Scripts\uv.exe run python main.py download-metadata
-.\.venv\Scripts\uv.exe run python main.py select-servers
-.\.venv\Scripts\uv.exe run python main.py extract-messages-remote
-.\.venv\Scripts\uv.exe run python main.py score-channels
-.\.venv\Scripts\uv.exe run python main.py init-duckdb
+.\.venv\Scripts\python.exe main.py download-metadata
+.\.venv\Scripts\python.exe main.py select-servers
+.\.venv\Scripts\python.exe main.py extract-messages-remote
+.\.venv\Scripts\python.exe main.py score-channels
+.\.venv\Scripts\python.exe main.py init-duckdb
 ```
 
 Fluxo alternativo (dataset local completo):
 
 ```powershell
-.\.venv\Scripts\uv.exe run python main.py download-dataset
-.\.venv\Scripts\uv.exe run python main.py extract-messages
+.\.venv\Scripts\python.exe main.py download-dataset
+.\.venv\Scripts\python.exe main.py extract-messages
 ```
 
 ## Ajustes úteis
@@ -60,44 +116,45 @@ Fluxo alternativo (dataset local completo):
 Liste os perfis disponíveis:
 
 ```powershell
-.\.venv\Scripts\uv.exe run python main.py list-profiles
+.\.venv\Scripts\python.exe main.py list-profiles
 ```
 
-Escolha o perfil de filtragem conforme o tema da pesquisa:
+Execute a seleção com o perfil de software:
 
 ```powershell
-.\.venv\Scripts\uv.exe run python main.py select-servers --profile software
-.\.venv\Scripts\uv.exe run python main.py select-servers --profile gaming
+.\.venv\Scripts\python.exe main.py select-servers --profile software
 ```
 
 Endureça ou afrouxe a seleção ajustando score mínimo e margem:
 
 ```powershell
-.\.venv\Scripts\uv.exe run python main.py select-servers --profile software --min-positive-score 7 --min-score-margin 3
+.\.venv\Scripts\python.exe main.py select-servers --profile software --min-positive-score 8 --min-score-margin 2 --max-negative-score 2
 ```
 
 Adicione regex extras sem precisar alterar código:
 
 ```powershell
-.\.venv\Scripts\uv.exe run python main.py select-servers --profile software --positive-regex "\bllm\b|\bai engineering\b" --negative-regex "\bcasino\b"
+.\.venv\Scripts\python.exe main.py select-servers --profile software --positive-regex "\bllm\b|\bai engineering\b" --negative-regex "\bcasino\b"
 ```
 
-Você pode remover mensagens de bots na extração:
+Por padrão, a extração remove mensagens de bots. Para manter bots em uma execução exploratória, use `--no-exclude-bots`:
 
 ```powershell
-.\.venv\Scripts\uv.exe run python main.py extract-messages-remote --exclude-bots
+.\.venv\Scripts\python.exe main.py extract-messages-remote --no-exclude-bots
 ```
 
-Você pode filtrar canais de forma dinâmica na extração:
+Você pode filtrar canais de forma dinâmica na extração, apenas para testes exploratórios:
 
 ```powershell
-.\.venv\Scripts\uv.exe run python main.py extract-messages-remote --include-channel-regex "dev|help|code|backend|frontend" --exclude-channel-regex "off-topic|meme|music"
+.\.venv\Scripts\python.exe main.py extract-messages-remote --include-channel-regex "dev|help|code|backend|frontend" --exclude-channel-regex "off-topic|meme|music"
 ```
+
+Para a metodologia final, prefira extração ampla dos canais textuais dos servidores candidatos e use `score-channels` para a triagem temática posterior.
 
 Depois da extração, gere a pontuação de canais:
 
 ```powershell
-.\.venv\Scripts\uv.exe run python main.py score-channels --min-messages 50
+.\.venv\Scripts\python.exe main.py score-channels --min-messages 50
 ```
 
 Classes geradas:
@@ -109,7 +166,14 @@ Classes geradas:
 | C      | Canal social/comunitário                       | Excluir da análise principal         |
 | D      | Canal administrativo, bot, regras, logs ou voz | Excluir da análise principal         |
 
-O score automático atual é uma triagem baseada em conteúdo e metadados do canal. Para a dissertação, a etapa final deve combinar essa triagem com modelagem semântica, por exemplo SBERT + BERTopic, e validação manual. O protocolo detalhado está em [CHANNEL_SELECTION_PROTOCOL.md](CHANNEL_SELECTION_PROTOCOL.md).
+O score automático atual é uma triagem baseada em conteúdo e metadados do canal. Para a dissertação, a etapa final deve combinar essa triagem com modelagem semântica, por exemplo SBERT + BERTopic, e validação manual. O protocolo detalhado está em [docs/methodology/CHANNEL_SELECTION_PROTOCOL.md](docs/methodology/CHANNEL_SELECTION_PROTOCOL.md).
+
+## Documentação
+
+- [docs/methodology/PIPELINE_USAGE_AND_METHODOLOGY.md](docs/methodology/PIPELINE_USAGE_AND_METHODOLOGY.md): passo a passo completo e metodologia de replicação.
+- [docs/methodology/FILTERING_FINDINGS.md](docs/methodology/FILTERING_FINDINGS.md): achados da filtragem de servidores com o corte atual.
+- [docs/methodology/CHANNEL_SELECTION_PROTOCOL.md](docs/methodology/CHANNEL_SELECTION_PROTOCOL.md): protocolo de seleção e validação de canais.
+- [docs/research/](docs/research/): notas de fundamentação teórica que não são necessárias para executar o pipeline.
 
 ## Uso programático (sem flags)
 
@@ -140,8 +204,9 @@ pipeline = DiscordUnveiledPipeline(paths)
 pipeline.select_servers(
 	SelectionConfig(
 		profile="software",
-		min_positive_score=6,
+		min_positive_score=8,
 		min_score_margin=2,
+		max_negative_score=2,
 	)
 )
 
@@ -150,8 +215,6 @@ pipeline.extract_messages_remote(
 		selected_servers_path=paths.selected_servers_parquet,
 		output_parquet=paths.messages_parquet,
 		exclude_bots=True,
-		include_channel_regex=[r"dev|help|code|backend|frontend"],
-		exclude_channel_regex=[r"off-topic|meme|music"],
 	)
 )
 
@@ -200,6 +263,16 @@ FROM software_channels
 ORDER BY software_channel_score DESC, n_messages DESC
 LIMIT 25;
 ```
+
+## Validação local
+
+Execute a suíte mínima de testes metodológicos:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests
+```
+
+Esses testes verificam se o corte por `max_negative_score` exclui candidatos ruidosos e se um canal tecnicamente forte com nome genérico, como `general`, não é descartado por depender apenas do nome.
 
 ## Observações
 
