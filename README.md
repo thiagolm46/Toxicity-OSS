@@ -174,6 +174,7 @@ O score automático atual é uma triagem baseada em conteúdo e metadados do can
 - [docs/methodology/PIPELINE_USAGE_AND_METHODOLOGY.md](docs/methodology/PIPELINE_USAGE_AND_METHODOLOGY.md): passo a passo completo e metodologia de replicação.
 - [docs/methodology/FILTERING_FINDINGS.md](docs/methodology/FILTERING_FINDINGS.md): achados da filtragem de servidores com o corte atual.
 - [docs/methodology/CHANNEL_SELECTION_PROTOCOL.md](docs/methodology/CHANNEL_SELECTION_PROTOCOL.md): protocolo de seleção e validação de canais.
+- [docs/methodology/NEO4J_DISENTANGLEMENT_INTERFACE_METHODOLOGY.md](docs/methodology/NEO4J_DISENTANGLEMENT_INTERFACE_METHODOLOGY.md): metodologia do disentanglement e da interface de inspecao do Neo4j.
 - [docs/research/](docs/research/): notas de fundamentação teórica que não são necessárias para executar o pipeline.
 
 ## Uso programático (sem flags)
