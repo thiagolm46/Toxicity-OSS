@@ -2,24 +2,25 @@
 
 ## Conversation disentanglement do canal Neo4J
 
-O pacote `discord_disentanglement` implementa uma primeira versao do pipeline de reconstrucao de threads para exports JSON/CSV do Discord. Ele filtra o canal `Neo4J`, anonimiza usuarios, extrai replies explicitos, cria candidatos mensagem->mensagem, calcula features auditaveis, aplica um baseline heuristico, constroi um grafo conversacional e exporta relatorios para revisao humana.
+O pacote `discord_disentanglement` implementa uma primeira versao do pipeline de reconstrucao de threads para exports JSON/CSV/Parquet do Discord. Ele pode filtrar o servidor `Neo4j` pelo campo `guild_name`, anonimiza usuarios, extrai replies explicitos, cria candidatos mensagem->mensagem, calcula features auditaveis, aplica um baseline heuristico, constroi um grafo conversacional e exporta relatorios para revisao humana.
 
-Comando principal:
+Comando principal para o Parquet produzido pelo pipeline anterior:
 
 ```powershell
 .\.venv\Scripts\python.exe -m discord_disentanglement run `
-  --input data/raw/discord_export.json `
-  --channel-name Neo4J `
+  --input data/processed/software_messages_software.parquet `
+  --guild-name Neo4j `
   --out data/processed/neo4j_threads `
   --threshold 0.50
 ```
 
-Tambem aceita CSV:
+Tambem aceita JSON/CSV e filtro por canal quando necessario:
 
 ```powershell
 .\.venv\Scripts\python.exe -m discord_disentanglement run `
   --input data/raw/discord_export.csv `
-  --channel-name Neo4J `
+  --guild-name Neo4j `
+  --channel-name app-dev `
   --out data/processed/neo4j_threads
 ```
 
@@ -39,10 +40,10 @@ Arquivos gerados:
 - `annotation_review.csv`
 - `reports/neo4j_threads.html`
 - `reports/neo4j_threads_summary.md`
-- `reports/thread_graphs/T_0001.html` etc.
+- `reports/thread_graphs/T_0001.html` etc. com paginas simples por thread
 - `exports/neo4j_import.cypher`
 
-Para abrir o explorer local sem depender de Streamlit:
+Para abrir o explorer local simplificado sem depender de Streamlit:
 
 ```powershell
 .\.venv\Scripts\python.exe apps/thread_explorer.py --data data/processed/neo4j_threads

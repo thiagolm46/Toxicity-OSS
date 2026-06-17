@@ -24,6 +24,7 @@ def synthetic_messages() -> list[dict[str, object]]:
         {
             "message_id": "m_001",
             "guild_id": "g1",
+            "guild_name": "Neo4j",
             "channel_id": "c1",
             "channel_name": "Neo4J",
             "author_id": "u1",
@@ -33,6 +34,7 @@ def synthetic_messages() -> list[dict[str, object]]:
         {
             "message_id": "m_002",
             "guild_id": "g1",
+            "guild_name": "Neo4j",
             "channel_id": "c1",
             "channel_name": "Neo4J",
             "author_id": "u3",
@@ -42,6 +44,7 @@ def synthetic_messages() -> list[dict[str, object]]:
         {
             "message_id": "m_003",
             "guild_id": "g1",
+            "guild_name": "Neo4j",
             "channel_id": "c1",
             "channel_name": "Neo4J",
             "author_id": "u2",
@@ -53,6 +56,7 @@ def synthetic_messages() -> list[dict[str, object]]:
         {
             "message_id": "m_004",
             "guild_id": "g1",
+            "guild_name": "Neo4j",
             "channel_id": "c1",
             "channel_name": "Neo4J",
             "author_id": "u4",
@@ -63,6 +67,7 @@ def synthetic_messages() -> list[dict[str, object]]:
         {
             "message_id": "m_005",
             "guild_id": "g1",
+            "guild_name": "Neo4j",
             "channel_id": "c1",
             "channel_name": "Neo4J",
             "author_id": "u1",
@@ -73,6 +78,7 @@ def synthetic_messages() -> list[dict[str, object]]:
         {
             "message_id": "m_006",
             "guild_id": "g1",
+            "guild_name": "Neo4j",
             "channel_id": "c1",
             "channel_name": "Neo4J",
             "author_id": "u3",
@@ -82,6 +88,7 @@ def synthetic_messages() -> list[dict[str, object]]:
         {
             "message_id": "m_007",
             "guild_id": "g1",
+            "guild_name": "Neo4j",
             "channel_id": "c1",
             "channel_name": "Neo4J",
             "author_id": "u2",
@@ -91,6 +98,7 @@ def synthetic_messages() -> list[dict[str, object]]:
         {
             "message_id": "m_008",
             "guild_id": "g1",
+            "guild_name": "Neo4j",
             "channel_id": "c1",
             "channel_name": "Neo4J",
             "author_id": "u5",
@@ -100,6 +108,7 @@ def synthetic_messages() -> list[dict[str, object]]:
         {
             "message_id": "m_999",
             "guild_id": "g1",
+            "guild_name": "Other Guild",
             "channel_id": "c2",
             "channel_name": "general",
             "author_id": "u9",
@@ -127,6 +136,22 @@ def write_csv(path: Path) -> None:
             writer.writerow(serialized)
 
 
+def write_parquet(path: Path) -> None:
+    rows = []
+    for row in synthetic_messages():
+        parquet_row = dict(row)
+        if "message_reference" in parquet_row and isinstance(parquet_row["message_reference"], dict):
+            parquet_row["referenced_message_id"] = parquet_row["message_reference"]["message_id"]
+            del parquet_row["message_reference"]
+        if "mentions" in parquet_row:
+            parquet_row["mentions_json"] = json.dumps(parquet_row["mentions"])
+            del parquet_row["mentions"]
+        parquet_row["attachments_json"] = "[]"
+        parquet_row["embeds_json"] = "[]"
+        rows.append(parquet_row)
+    pd.DataFrame(rows).to_parquet(path, index=False)
+
+
 def test_load_json_and_csv(tmp_path: Path) -> None:
     json_path = tmp_path / "export.json"
     csv_path = tmp_path / "export.csv"
@@ -135,13 +160,44 @@ def test_load_json_and_csv(tmp_path: Path) -> None:
 
     assert len(load_discord_export(json_path)) == 9
     assert len(load_discord_export(csv_path)) == 9
+    assert len(load_discord_export(json_path, guild_name="Neo4j")) == 8
+
+
+def test_load_parquet_filters_guild_and_preserves_references(tmp_path: Path) -> None:
+    parquet_path = tmp_path / "messages.parquet"
+    write_parquet(parquet_path)
+
+    rows = load_discord_export(parquet_path, guild_name="Neo4j")
+    messages = normalize_messages(
+        rows,
+        guild_name="Neo4j",
+        guild_id=None,
+        channel_name=None,
+        channel_id=None,
+        preserve_raw_content=False,
+    )
+    explicit_edges = extract_explicit_edges(messages)
+
+    assert len(rows) == 8
+    assert {message.channel_name for message in messages} == {"Neo4J"}
+    assert ("m_003", "m_001", "explicit_reply") in {
+        (edge.source_message_id, edge.target_message_id, edge.edge_type)
+        for edge in explicit_edges
+    }
 
 
 def test_normalize_anonymizes_users_and_extracts_explicit_reply(tmp_path: Path) -> None:
     json_path = tmp_path / "export.json"
     write_json(json_path)
     rows = load_discord_export(json_path)
-    messages = normalize_messages(rows, channel_name="Neo4J", channel_id=None, preserve_raw_content=False)
+    messages = normalize_messages(
+        rows,
+        guild_name="Neo4j",
+        guild_id=None,
+        channel_name="Neo4J",
+        channel_id=None,
+        preserve_raw_content=False,
+    )
 
     assert len(messages) == 8
     assert messages[0].author_anon == "USER_001"
@@ -157,7 +213,7 @@ def test_normalize_anonymizes_users_and_extracts_explicit_reply(tmp_path: Path) 
 def test_candidate_generation_and_score(tmp_path: Path) -> None:
     json_path = tmp_path / "export.json"
     write_json(json_path)
-    messages = normalize_messages(load_discord_export(json_path), "Neo4J", None, False)
+    messages = normalize_messages(load_discord_export(json_path), "Neo4j", None, "Neo4J", None, False)
     explicit_edges = extract_explicit_edges(messages)
     candidates = generate_candidate_pairs(
         messages=messages,
@@ -188,6 +244,7 @@ def test_graph_threads_and_pipeline_outputs(tmp_path: Path) -> None:
         DisentanglementConfig(
             input_path=input_path,
             out_dir=out_dir,
+            guild_name="Neo4j",
             channel_name="Neo4J",
             threshold=0.5,
         )
@@ -227,14 +284,15 @@ def test_graph_threads_and_pipeline_outputs(tmp_path: Path) -> None:
     )
 
     html = (out_dir / "reports" / "neo4j_threads.html").read_text(encoding="utf-8")
-    assert "Neo4J Thread Explorer" in html
-    assert "incivility_label=not computed yet" in html
+    assert "Neo4j Threads" in html
+    assert "Cobertura dos dados" in html
+    assert "incivility_label" in html
 
 
 def test_build_graph_and_extract_threads_directly(tmp_path: Path) -> None:
     json_path = tmp_path / "export.json"
     write_json(json_path)
-    messages = normalize_messages(load_discord_export(json_path), "Neo4J", None, False)
+    messages = normalize_messages(load_discord_export(json_path), "Neo4j", None, "Neo4J", None, False)
     explicit_edges = extract_explicit_edges(messages)
     graph = build_graph(messages, explicit_edges)
     threads = extract_threads(messages, explicit_edges, split_gap_hours=6)

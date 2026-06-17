@@ -9,7 +9,7 @@ from .pipeline import DisentanglementConfig, run_pipeline
 
 app = typer.Typer(
     add_completion=False,
-    help="Conversation disentanglement para exports JSON/CSV de canais Discord.",
+    help="Conversation disentanglement para exports JSON/CSV/Parquet de mensagens Discord.",
 )
 console = Console()
 
@@ -27,12 +27,22 @@ def run(
         exists=True,
         dir_okay=False,
         readable=True,
-        help="Arquivo JSON ou CSV exportado do Discord.",
+        help="Arquivo JSON, CSV ou Parquet com mensagens do Discord.",
+    ),
+    guild_name: str | None = typer.Option(
+        None,
+        "--guild-name",
+        help="Nome do servidor/guild a processar, por exemplo Neo4j.",
+    ),
+    guild_id: str | None = typer.Option(
+        None,
+        "--guild-id",
+        help="ID do servidor/guild a processar.",
     ),
     channel_name: str | None = typer.Option(
-        "Neo4J",
+        None,
         "--channel-name",
-        help="Nome do canal a processar. Use vazio se preferir filtrar por channel-id.",
+        help="Nome do canal a processar. Se omitido, processa todos os canais do escopo.",
     ),
     channel_id: str | None = typer.Option(
         None,
@@ -84,6 +94,8 @@ def run(
     config = DisentanglementConfig(
         input_path=input_path,
         out_dir=out_dir,
+        guild_name=guild_name,
+        guild_id=guild_id,
         channel_name=channel_name or None,
         channel_id=channel_id,
         threshold=threshold,

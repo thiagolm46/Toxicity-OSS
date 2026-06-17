@@ -43,7 +43,9 @@ from .text import (
 class DisentanglementConfig:
     input_path: Path
     out_dir: Path
-    channel_name: str | None = "Neo4J"
+    guild_name: str | None = None
+    guild_id: str | None = None
+    channel_name: str | None = None
     channel_id: str | None = None
     threshold: float = 0.50
     uncertain_threshold: float = 0.60
@@ -57,15 +59,23 @@ class DisentanglementConfig:
 
 
 def run_pipeline(config: DisentanglementConfig) -> dict[str, Path]:
-    rows = load_discord_export(config.input_path)
+    rows = load_discord_export(
+        config.input_path,
+        guild_name=config.guild_name,
+        guild_id=config.guild_id,
+        channel_name=config.channel_name,
+        channel_id=config.channel_id,
+    )
     messages = normalize_messages(
         rows,
+        guild_name=config.guild_name,
+        guild_id=config.guild_id,
         channel_name=config.channel_name,
         channel_id=config.channel_id,
         preserve_raw_content=config.preserve_raw_content,
     )
     if not messages:
-        raise ValueError("Nenhuma mensagem encontrada para o canal informado.")
+        raise ValueError("Nenhuma mensagem encontrada para o escopo informado.")
 
     out_dir = config.out_dir
     reports_dir = out_dir / "reports"
@@ -172,6 +182,8 @@ def run_pipeline(config: DisentanglementConfig) -> dict[str, Path]:
 
 def normalize_messages(
     rows: list[dict[str, Any]],
+    guild_name: str | None,
+    guild_id: str | None,
     channel_name: str | None,
     channel_id: str | None,
     preserve_raw_content: bool,
@@ -179,7 +191,13 @@ def normalize_messages(
     filtered = [
         row
         for row in rows
-        if _matches_channel(row=row, channel_name=channel_name, channel_id=channel_id)
+        if _matches_scope(
+            row=row,
+            guild_name=guild_name,
+            guild_id=guild_id,
+            channel_name=channel_name,
+            channel_id=channel_id,
+        )
     ]
     filtered.sort(key=lambda row: (row["timestamp"], row.get("message_id") or ""))
 
@@ -214,6 +232,7 @@ def normalize_messages(
         record = MessageRecord(
             message_id=str(message_id),
             guild_id=row.get("guild_id"),
+            guild_name=row.get("guild_name"),
             channel_id=row.get("channel_id"),
             channel_name=row.get("channel_name"),
             native_thread_id=row.get("native_thread_id"),
@@ -775,6 +794,7 @@ def messages_to_dataframe(messages: list[MessageRecord], preserve_raw_content: b
             {
                 "message_id": message.message_id,
                 "guild_id": message.guild_id or "",
+                "guild_name": message.guild_name or "",
                 "channel_id": message.channel_id or "",
                 "channel_name": message.channel_name or "",
                 "native_thread_id": message.native_thread_id or "",
@@ -995,7 +1015,7 @@ def suggest_merges(threads: list[ThreadRecord]) -> list[dict[str, Any]]:
     for previous, current in zip(ordered, ordered[1:], strict=False):
         gap = (current.start_time - previous.end_time).total_seconds()
         keyword_overlap = set(previous.keywords) & set(current.keywords)
-        if gap <= 1800 and keyword_overlap and (
+        if 0 <= gap <= 1800 and keyword_overlap and (
             previous.status != "ok" or current.status != "ok" or previous.message_count <= 2 or current.message_count <= 2
         ):
             suggestions.append(
@@ -1074,7 +1094,17 @@ def primary_edge_by_source(graph_edges: list[EdgeRecord]) -> dict[str, EdgeRecor
     return primary
 
 
-def _matches_channel(row: dict[str, Any], channel_name: str | None, channel_id: str | None) -> bool:
+def _matches_scope(
+    row: dict[str, Any],
+    guild_name: str | None,
+    guild_id: str | None,
+    channel_name: str | None,
+    channel_id: str | None,
+) -> bool:
+    if guild_id and str(row.get("guild_id") or "") != str(guild_id):
+        return False
+    if guild_name and str(row.get("guild_name") or "").casefold() != guild_name.casefold():
+        return False
     if channel_id and str(row.get("channel_id") or "") == str(channel_id):
         return True
     if channel_name:

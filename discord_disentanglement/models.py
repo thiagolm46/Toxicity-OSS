@@ -9,6 +9,7 @@ from typing import Any
 class MessageRecord:
     message_id: str
     guild_id: str | None
+    guild_name: str | None
     channel_id: str | None
     channel_name: str | None
     native_thread_id: str | None
