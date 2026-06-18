@@ -69,6 +69,7 @@ class ThreadRecord:
     message_count: int
     participant_count: int
     avg_confidence: float
+    min_confidence: float
     explicit_edge_count: int
     inferred_edge_count: int
     uncertain_edge_count: int

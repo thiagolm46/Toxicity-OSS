@@ -1,693 +1,752 @@
-# Task: Discord Conversation Disentanglement para canal Neo4J
-
-## Objetivo
-
-Implementar um pipeline inicial e robusto para transformar mensagens brutas de um canal do Discord chamado `Neo4J` em threads úteis, coerentes e interpretáveis.
-
-A tarefa atual é apenas conversation disentanglement. Não implementar ainda classificação de incivilidade, toxicidade ou derailment.
-
-## Ideia central
-
-Modelar o problema como grafo conversacional:
-
-- nó = mensagem;
-- aresta = relação explícita ou inferida entre mensagens;
-- componente conectado = thread candidata.
-
-Não usar clustering semântico puro como abordagem principal. O método deve inferir relações mensagem→mensagem.
-
-## Entrada
-
-Aceitar JSON ou CSV exportado do Discord.
-
-Campos desejados, quando existirem:
-
-- message_id
-- guild_id
-- channel_id
-- channel_name
-- native_thread_id
-- author_id
-- timestamp
-- edited_timestamp
-- content
-- mentions
-- attachments
-- embeds
-- reactions
-- message_reference
-- referenced_message
-- reply_to_message_id
-- is_bot
-- is_webhook
-- message_type
-
-Deve haver filtro por:
-
-- `--channel-name Neo4J`
-- ou `--channel-id`
-
-## Saída esperada
-
-Gerar diretório de saída, por exemplo:
-
-```text
-data/processed/neo4j_threads/
-```
-
-Com arquivos:
-
-```text
-messages_normalized.csv
-edges_explicit.csv
-candidate_pairs.csv
-edges_inferred.csv
-graph_edges.csv
-threads.csv
-threads.json
-thread_messages.csv
-thread_summaries.csv
-reports/neo4j_threads.html
-reports/neo4j_threads_summary.md
-exports/neo4j_import.cypher
-```
-
-## Privacidade
-
-Anonimizar usuários:
-
-```text
-author_id real → USER_001, USER_002, ...
-```
-
-Nas visualizações, nunca mostrar IDs reais.
-
-Preservar `content_raw` internamente apenas se configurado. Para visualização, usar `content_normalized`.
-
-## Normalização
-
-Criar:
-
-- `content_raw`
-- `content_normalized`
-
-Regras:
-
-- menções → `USER_XXX`;
-- canais → `CHANNEL_XXX`;
-- URLs → `<URL>`;
-- blocos de código → `<CODE_BLOCK>`;
-- anexos → `<ATTACHMENT:type>`;
-- preservar emojis;
-- preservar `?` e `!`;
-- não remover mensagens curtas como “sim”, “não”, “isso”, “?”, “kkkk”, “valeu”.
-
-## Links explícitos
-
-Extrair primeiro:
-
-- reply explícito;
-- `message_reference`;
-- `referenced_message`;
-- thread nativa;
-- link de mensagem colado no texto, se reconhecível.
-
-Arquivo:
-
-```text
-edges_explicit.csv
-```
-
-Colunas:
-
-```text
-source_message_id,target_message_id,edge_type,confidence,evidence_json
-```
-
-Confiança:
-
-```text
-explicit_reply = 1.0
-native_thread = 0.95
-quoted_message_link = 0.90
-```
-
-Menção direta não deve virar edge automaticamente; deve ser feature.
-
-## Geração de candidatos
-
-Para cada mensagem atual `m_i`, gerar candidatos anteriores `m_j`.
-
-Critérios:
-
-- últimas 50 mensagens anteriores;
-- mensagens nas últimas 24h;
-- mensagens de usuários mencionados;
-- mensagens que mencionaram o autor atual;
-- mensagens da mesma thread nativa;
-- mensagens com similaridade textual;
-- mensagens com termos técnicos compartilhados.
-
-Gerar:
-
-```text
-candidate_pairs.csv
-```
-
-## Features por par
-
-Temporais:
-
-- `delta_seconds`
-- `log_delta_seconds`
-- `temporal_score`
-- `same_burst`
-
-Participantes:
-
-- `same_author`
-- `source_mentions_target_author`
-- `target_mentions_source_author`
-- `author_participated_recently`
-
-Textuais:
-
-- TF-IDF cosine similarity;
-- fallback obrigatório sem embeddings;
-- lexical overlap;
-- shared technical tokens;
-- shared URL;
-- shared code/error marker.
-
-Discursivas:
-
-- target tem pergunta;
-- source parece resposta;
-- source começa com “sim”, “não”, “isso”, “depende”, “tenta”, “verifica”;
-- source tem marcador de desacordo: “mas”, “porém”, “não é isso”, “na verdade”;
-- source tem marcador de razão: “porque”, “pois”, “então”, “because”, “since”;
-- source usa segunda pessoa: “você”, “seu”, “teu”, “you”, “your”.
-
-Estruturais:
-
-- explicit reply;
-- same native thread;
-- same channel;
-- source/target bot;
-- attachment;
-- code block.
-
-## Scoring heurístico inicial
-
-Criar score auditável:
-
-```text
-score =
-  0.30 * semantic_similarity
-+ 0.20 * temporal_score
-+ 0.15 * mention_score
-+ 0.10 * lexical_overlap
-+ 0.10 * question_answer_score
-+ 0.10 * same_native_thread_score
-+ 0.05 * participant_continuity_score
-```
-
-Regras:
-
-- se explicit reply existir, score = 1.0;
-- se mesma thread nativa, aumentar score;
-- se distância temporal for muito grande sem reply/menção, penalizar;
-- mensagens curtas devem depender mais de tempo, menção e participante;
-- pergunta→resposta deve aumentar score;
-- similaridade semântica sozinha não deve criar link forte se tempo e participantes não sustentarem.
-
-Threshold padrão:
-
-```text
-0.50
-```
-
-Se nenhum candidato atingir threshold, a mensagem inicia nova thread.
-
-## Grafo
-
-Usar `networkx`.
-
-Criar grafo direcionado:
-
-```text
-source = mensagem atual
-target = mensagem anterior/pai
-```
-
-Exportar:
-
-```text
-graph_edges.csv
-graph.graphml
-graph.json
-```
-
-## Extração de threads
-
-Converter o grafo para não-direcionado e extrair componentes conectados.
-
-Cada thread deve conter:
-
-- thread_id;
-- root_message_id;
-- mensagens em ordem temporal;
-- participantes;
-- início;
-- fim;
-- duração;
-- quantidade de mensagens;
-- quantidade de participantes;
-- confiança média;
-- número de links explícitos;
-- número de links inferidos;
-- número de links incertos;
-- palavras-chave;
-- forma conversacional preliminar.
-
-Formas preliminares:
-
-- pergunta-resposta;
-- discussão técnica;
-- sequência informativa;
-- conversa social;
-- ambígua;
-- thread curta.
-
-## Pós-processamento
-
-Implementar:
-
-1. split por grande lacuna temporal;
-2. marcação de threads ambíguas;
-3. sugestão de merge, sem fazer merge destrutivo automaticamente.
-
-Critérios de ambiguidade:
-
-- baixa confiança média;
-- muitos links incertos;
-- muitas mensagens curtas;
-- múltiplos pais possíveis com scores próximos.
-
-## Visualização
-
-Gerar HTML estático:
-
-```text
-reports/neo4j_threads.html
-```
-
-A página deve mostrar:
-
-- lista de threads;
-- filtros por confiança, tamanho, participante e palavra-chave;
-- cards de thread;
-- mensagens em ordem temporal;
-- participantes anonimizados;
-- confiança média;
-- badges: explicit, inferred, uncertain, ambiguous;
-- arestas como “mensagem X responde/continua mensagem Y”.
-
-Gerar também:
-
-```text
-reports/neo4j_threads_summary.md
-```
-
-## Export para Neo4j
-
-Gerar opcionalmente:
-
-```text
-exports/neo4j_import.cypher
-```
-
-Modelo:
-
-```cypher
-(:User)-[:AUTHORED]->(:Message)
-(:Message)-[:REPLIES_TO {confidence, method}]->(:Message)
-(:Message)-[:BELONGS_TO]->(:Thread)
-```
-
-Não conectar automaticamente ao banco.
-
-## Preparação para incivilidade posterior
-
-Criar `thread_summaries.csv` com:
-
-```text
-thread_id,title,neutral_summary,scd_summary,incivility_label,derailment_risk
-```
-
-Por enquanto:
-
-```text
-scd_summary = null
-incivility_label = null
-derailment_risk = null
-```
-
-## CLI desejada
-
-Exemplo:
-
-```bash
-python -m discord_disentanglement run \
-  --input data/raw/discord_export.json \
-  --channel-name Neo4J \
-  --out data/processed/neo4j_threads \
-  --threshold 0.50
-```
-
-Também aceitar CSV.
-
-## Testes
-
-Criar testes com `pytest` para:
-
-- carregar JSON;
-- carregar CSV;
-- anonimizar usuários;
-- extrair reply explícito;
-- gerar candidatos;
-- calcular score;
-- construir grafo;
-- extrair threads;
-- gerar HTML.
-
-Criar fixture sintética com:
-
-- duas conversas intercaladas;
-- uma reply explícita;
-- uma menção;
-- uma mensagem curta;
-- uma resposta tardia;
-- uma mensagem que inicia nova thread.
-
-## Critérios de aceitação
-
-O pipeline deve:
-
-- rodar de ponta a ponta;
-- filtrar o canal `Neo4J`;
-- anonimizar usuários;
-- preservar links explícitos;
-- inferir links implícitos com confiança e evidências;
-- gerar threads candidatas;
-- gerar HTML navegável;
-- não classificar incivilidade ainda;
-- ser modular para futuro modelo supervisionado.
-
-## Visualização robusta: Thread Explorer
-
-Além do relatório HTML simples, implementar uma visualização robusta para inspeção humana do processo de conversation disentanglement.
-
-O objetivo da visualização não é classificar incivilidade ainda. O objetivo é auditar e validar a reconstrução das threads.
-
-A visualização deve ajudar a responder:
-
-1. A thread reconstruída está coerente?
-2. Quais mensagens foram ligadas?
-3. Qual foi a evidência usada em cada ligação?
-4. Onde o algoritmo está inseguro?
-5. Quais threads precisam de revisão manual?
-
-### Modos de visualização
-
-Implementar dois modos:
-
-1. Relatório HTML estático:
-   - `reports/neo4j_threads.html`
-   - adequado para compartilhamento, inspeção rápida e artefato reproduzível.
-
-2. Dashboard interativo local:
-   - preferencialmente com Streamlit;
-   - arquivo sugerido: `apps/thread_explorer.py`;
-   - comando sugerido:
-
-```bash
-streamlit run apps/thread_explorer.py -- \
-  --data data/processed/neo4j_threads
-```
-
-Caso Streamlit não esteja disponível, implementar ao menos um HTML interativo com JavaScript local e dados embutidos em JSON.
-
-### Estrutura do dashboard
-
-O dashboard deve ter as seguintes seções:
-
-#### 1. Overview do canal
-
-Mostrar métricas gerais:
-
-- total de mensagens processadas;
-- total de threads extraídas;
-- média e mediana de mensagens por thread;
-- número de threads curtas;
-- número de threads longas;
-- número de threads ambíguas;
-- percentual de links explícitos;
-- percentual de links inferidos;
-- percentual de links incertos;
-- confiança média geral;
-- distribuição de tamanhos de thread;
-- distribuição de confiança das threads.
-
-#### 2. Timeline do canal
-
-Criar uma visualização temporal das mensagens e threads.
-
-A timeline deve permitir identificar:
-
-- períodos de alta atividade;
-- múltiplas conversas simultâneas;
-- threads que atravessam grandes lacunas temporais;
-- possíveis erros de merge;
-- possíveis erros de split.
-
-Cada mensagem deve aparecer associada ao seu `thread_id`.
-
-#### 3. Thread Explorer
-
-Criar uma tela principal de inspeção de threads.
-
-Cada thread deve aparecer como um card contendo:
-
-- `thread_id`;
-- título automático;
-- root message;
-- horário inicial;
-- horário final;
-- duração;
-- número de mensagens;
-- número de participantes;
-- participantes anonimizados;
-- confiança média;
-- número de links explícitos;
-- número de links inferidos;
-- número de links incertos;
-- palavras-chave;
-- forma conversacional preliminar;
-- status: `ok`, `ambiguous`, `needs_review`.
-
-Dentro de cada card, mostrar as mensagens em ordem temporal:
-
-- posição na thread;
-- `message_id`;
-- autor anonimizado;
-- timestamp;
-- conteúdo normalizado;
-- mensagem pai, se existir;
-- score do vínculo com a mensagem pai;
-- tipo de link: `explicit_reply`, `native_thread`, `inferred`, `uncertain`;
-- principais evidências do vínculo.
-
-Exemplo de exibição textual:
-
-```text
-USER_001 · 10:03
-Como faço relacionamento many-to-many no Neo4J?
-
-USER_002 · 10:04
-Você pode criar um nó intermediário...
-↳ responde a m_001 | score=0.91 | evidências: tempo, pergunta-resposta, similaridade
-```
-
-#### 4. Graph Viewer da thread
-
-Para cada thread, permitir visualizar o grafo da conversa.
+Você é um engenheiro de pesquisa em NLP, conversation disentanglement, engenharia de software empírica e visualização de dados conversacionais.
+
+Estou trabalhando em um projeto já existente chamado `discord_disentanglement`. NÃO recrie o projeto do zero. Antes de implementar qualquer mudança, leia a estrutura atual do repositório, os módulos existentes, os testes e os documentos metodológicos já presentes.
+
+Documentos metodológicos importantes já existentes:
+
+* `DISENTANGLEMENT_DEVELOPMENT_PROCESS.md`
+* `NEO4J_DISENTANGLEMENT_INTERFACE_METHODOLOGY.md`
+* `PIPELINE_USAGE_AND_METHODOLOGY.md`
+* `FILTERING_FINDINGS.md`
+* `CHANNEL_SELECTION_PROTOCOL.md`
+* prompt/tarefa inicial de disentanglement, se existir em `docs/tasks/discord_disentanglement_neo4j.md`
+
+Objetivo desta rodada:
+Evoluir o pipeline atual de conversation disentanglement para uma versão mais robusta, mantendo compatibilidade com a v1 já implementada.
+
+Escopo:
+
+* Focar exclusivamente em conversation disentanglement.
+* Não implementar toxicidade, incivilidade, SCD, derailment ou moderação.
+* Não exigir anotação manual.
+* Não usar `thread_id` como feature direta de predição.
+* Usar `thread_id`, quando disponível, apenas como referência estrutural/silver label para avaliação.
+* Preservar privacidade: interface e relatórios devem continuar usando conteúdo normalizado e usuários anonimizados.
+* Preservar auditabilidade: cada vínculo inferido deve continuar tendo score, método e evidências legíveis.
+
+Estado atual conhecido:
+O pipeline já possui:
+
+* leitura de JSON, CSV e Parquet;
+* filtragem por guild/canal;
+* normalização de conteúdo;
+* anonimização de autores e menções;
+* extração de edges explícitos;
+* geração de candidatos anteriores por mensagem;
+* score heurístico auditável;
+* construção de grafo com NetworkX;
+* extração de threads como componentes conectados;
+* exportação para CSV, JSON, GraphML, HTML e Neo4j;
+* relatório HTML estático para inspeção;
+* testes sintéticos para casos como reply explícito, menção, mensagem curta e conversas intercaladas.
+
+A evolução deve respeitar esse desenho:
+mensagem atual → mensagem anterior candidata → score/evidências → aresta → grafo → thread candidata
+
+Não substituir isso por clustering semântico global.
+
+==================================================
+
+1. Auditoria inicial obrigatória
+   ==================================================
+
+Primeiro, faça uma auditoria do código atual e gere um pequeno relatório em:
+
+`reports/development/disentanglement_upgrade_audit.md`
+
+O relatório deve listar:
+
+* módulos existentes;
+* comandos CLI existentes;
+* artefatos atualmente gerados;
+* testes existentes;
+* pontos onde o pipeline já faz normalização;
+* pontos onde extrai explicit replies;
+* pontos onde gera candidatos;
+* pontos onde calcula score;
+* pontos onde constrói grafo;
+* pontos onde gera HTML;
+* pontos onde exporta para Neo4j;
+* riscos de quebrar compatibilidade.
+
+Depois implemente mudanças incrementais, preservando os comandos existentes.
+
+==================================================
+2. Configuração
+===============
+
+Criar ou atualizar um arquivo:
+
+`configs/disentanglement_default.yaml`
+
+Adicionar parâmetros sem quebrar o comportamento atual:
+
+embeddings:
+enabled: true
+provider: sentence_transformers
+model_name: sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+fallback_to_tfidf: true
+batch_size: 64
+normalize: true
+cache: true
+
+candidate_generation:
+max_previous_messages: 50
+max_time_delta_minutes: 1440
+same_channel_only: true
+include_explicit_replies: true
+include_temporal_candidates: true
+include_semantic_candidates: true
+semantic_top_k: 20
+min_semantic_similarity: 0.25
+max_candidates_per_message: 80
+
+link_scoring:
+mode: hybrid
+threshold: 0.50
+explicit_reply_score: 1.0
+uncertain_margin: 0.08
+weights:
+semantic_similarity: 0.30
+temporal_score: 0.20
+mention_score: 0.15
+lexical_overlap: 0.10
+question_answer_score: 0.10
+same_native_thread_score: 0.10
+participant_continuity_score: 0.05
+
+evaluation:
+enabled: true
+use_thread_id_as_silver_reference: true
+use_explicit_replies_as_reference: true
+compute_link_metrics: true
+compute_cluster_metrics: true
+compute_stability_metrics: true
+thresholds: [0.40, 0.45, 0.50, 0.55, 0.60, 0.65]
+
+interface:
+mode: static_html
+generate_thread_pages: true
+generate_overview: true
+show_evidence: true
+show_alternative_parents: true
+show_ambiguity: true
+show_timeline: true
+preserve_offline_compatibility: true
+
+neo4j_export:
+enabled: true
+message_label: Message
+conversation_label: PredictedConversation
+predicted_reply_relationship: PREDICTED_REPLIES_TO
+belongs_to_predicted_relationship: BELONGS_TO_PREDICTED_CONVERSATION
+generate_aura_notes: true
+
+random_seed: 42
+
+Se o projeto já usa outro formato de configuração, integre esses campos ao padrão existente.
+
+==================================================
+3. Embeddings semânticos opcionais
+==================================
+
+Adicionar um módulo incremental, sem remover TF-IDF:
+
+`discord_disentanglement/embeddings.py`
 
 Requisitos:
 
-- nó = mensagem;
-- aresta = relação mensagem → mensagem anterior;
-- aresta explícita deve ser distinguível de aresta inferida;
-- aresta incerta deve ser destacada;
-- espessura ou opacidade da aresta deve representar confiança;
-- clique em um nó deve mostrar a mensagem;
-- clique em uma aresta deve mostrar as evidências.
+* usar `sentence-transformers` quando instalado;
+* modelo default: `sentence-transformers/paraphrase-multilingual-mpnet-base-v2`;
+* gerar embeddings para `content_normalized`;
+* normalizar embeddings para cosine similarity;
+* cachear embeddings em arquivo `.npy`;
+* gerar índice `message_id -> embedding_index`;
+* se `sentence-transformers` não estiver disponível, usar o TF-IDF atual sem quebrar o pipeline;
+* registrar nos logs se o pipeline está usando embeddings reais ou fallback TF-IDF.
 
-Implementação sugerida:
+Artefatos:
 
-- `networkx` para construção;
-- `pyvis` ou `vis-network` para visualização interativa;
-- exportar também um HTML por thread, se possível:
+* `message_embeddings.npy`
+* `message_embedding_index.csv`
+* `embedding_metadata.json`
 
-```text
-reports/thread_graphs/T_0001.html
-reports/thread_graphs/T_0002.html
-```
+Não baixar modelo silenciosamente sem log. O usuário precisa saber qual modelo foi usado.
 
-#### 5. Evidence Inspector
+==================================================
+4. Candidate generation híbrido
+===============================
 
-Implementar uma área de inspeção de evidências para cada link.
+Evoluir a geração de candidatos sem remover as estratégias atuais.
 
-Ao selecionar uma aresta, mostrar:
+Para cada mensagem source, gerar candidatos target anteriores por:
 
-- `source_message_id`;
-- `target_message_id`;
-- conteúdo da mensagem source;
-- conteúdo da mensagem target;
-- `confidence`;
-- `method`;
-- `edge_type`;
-- `delta_seconds`;
-- `semantic_similarity`;
-- `temporal_score`;
-- `mention_score`;
-- `lexical_overlap`;
-- `question_answer_score`;
-- `same_native_thread_score`;
-- `participant_continuity_score`;
-- `candidate_rank`;
-- lista dos principais candidatos alternativos, se houver.
+1. janela temporal;
+2. últimas N mensagens;
+3. explicit replies obrigatórios;
+4. menções e continuidade de participante;
+5. similaridade textual TF-IDF;
+6. similaridade por embeddings, quando disponível;
+7. tokens técnicos compartilhados;
+8. URLs, código ou erro compartilhado.
 
-Exemplo de estrutura:
+Regras:
 
-```json
-{
-  "source_message_id": "m_105",
-  "target_message_id": "m_102",
-  "confidence": 0.84,
-  "method": "heuristic_v1",
-  "evidence": {
-    "delta_seconds": 42,
-    "semantic_similarity": 0.71,
-    "temporal_score": 0.93,
-    "mention_score": 0.0,
-    "lexical_overlap": 0.4,
-    "question_answer_score": 0.8,
-    "same_native_thread_score": 0.0,
-    "participant_continuity_score": 0.65
-  },
-  "alternative_parents": [
-    { "message_id": "m_101", "score": 0.66 },
-    { "message_id": "m_099", "score": 0.52 }
-  ]
-}
-```
+* target deve sempre ser anterior ao source, exceto se já houver explicit reply documentado em sentido diferente;
+* menção não cria edge automaticamente;
+* `thread_id` não pode ser usado para criar candidato obrigatório, exceto se for uma thread nativa explicitamente reconhecida já tratada pelo pipeline;
+* limitar candidatos por mensagem para evitar explosão combinatória.
 
-#### 6. Ambiguity and Review View
+Atualizar ou gerar:
 
-Criar uma seção específica para revisão de casos problemáticos.
+`candidate_pairs.csv`
 
-Listar automaticamente:
+Colunas mínimas:
 
-- threads com confiança média baixa;
-- threads com muitos links incertos;
-- threads com mensagens demais;
-- threads com apenas uma mensagem;
-- mensagens sem pai;
-- mensagens com múltiplos pais candidatos próximos;
-- possíveis splits;
-- possíveis merges;
-- mensagens curtas com baixa confiança;
-- replies inferidos após grande lacuna temporal.
+* source_message_id
+* target_message_id
+* candidate_sources
+* source_timestamp
+* target_timestamp
+* delta_seconds
+* same_channel
+* same_author
+* explicit_reply_exists
+* semantic_similarity
+* tfidf_similarity
+* candidate_rank_by_time
+* candidate_rank_by_semantic_similarity
 
-Cada item deve ter um motivo de revisão:
+==================================================
+5. Features por par
+===================
 
-```text
-needs_review_reason = "low_avg_confidence"
-needs_review_reason = "large_temporal_gap"
-needs_review_reason = "many_uncertain_edges"
-needs_review_reason = "possible_wrong_merge"
-needs_review_reason = "possible_over_split"
-```
+Atualizar o cálculo de features por par em um módulo claro.
 
-#### 7. Annotation Mode opcional
+Gerar ou atualizar:
 
-Preparar a estrutura para anotação manual, mesmo que simples.
+`candidate_features.csv`
 
-Permitir exportar um CSV de revisão:
+Features obrigatórias:
 
-```text
-annotation_review.csv
-```
+* delta_seconds
+* log_delta_seconds
+* temporal_score
+* same_burst
+* same_author
+* source_mentions_target_author
+* target_mentions_source_author
+* author_participated_recently
+* participant_continuity_score
+* lexical_overlap
+* jaccard_token_overlap
+* tfidf_similarity
+* semantic_similarity
+* shared_technical_tokens
+* shared_url_marker
+* shared_code_or_error_marker
+* target_has_question
+* source_is_probable_answer
+* question_answer_score
+* explicit_reply_exists
+* same_channel
+* same_native_thread, se existir de forma nativa
+* score_gap_to_second_best
+* number_of_close_candidates
+
+Preservar compatibilidade com as features antigas.
+
+==================================================
+6. Link scoring híbrido
+=======================
+
+Evoluir o score atual para modo híbrido, preservando o score heurístico.
+
+O score final deve combinar:
+
+* score heurístico atual;
+* similaridade por embeddings, se disponível;
+* TF-IDF, como fallback ou sinal auxiliar;
+* força de explicit reply;
+* continuidade temporal;
+* continuidade de participantes;
+* pergunta-resposta;
+* sinais técnicos compartilhados.
+
+Regras:
+
+* explicit reply deve continuar recebendo score 1.0;
+* mensagens curtas não devem ser penalizadas apenas por baixa similaridade textual;
+* mensagens curtas devem depender mais de tempo, menção, participação e contexto;
+* similaridade semântica isolada não deve criar link forte se tempo e participantes não sustentarem a relação;
+* candidatos com scores próximos devem ser marcados como ambíguos/uncertain;
+* se nenhum candidato atingir o threshold, a mensagem deve iniciar nova thread.
+
+Gerar ou atualizar:
+
+`edges_inferred.csv`
 
 Colunas:
 
-```text
-thread_id,message_id,current_parent_id,suggested_parent_id,annotator_parent_id,review_status,notes
-```
+* source_message_id
+* target_message_id
+* confidence
+* method
+* edge_type
+* semantic_similarity
+* tfidf_similarity
+* time_delta_seconds
+* score_heuristic
+* score_final
+* evidence_json
+* alternative_parents_json
+* model_version
 
-O dashboard pode permitir apenas marcar manualmente via arquivo CSV por enquanto. Não é obrigatório implementar edição interativa completa na primeira versão.
+Tipos de edge:
 
-#### 8. Preparação para incivilidade futura
+* explicit_reply
+* inferred_reply
+* uncertain_reply
 
-Na visualização, deixar campos preparados, mas vazios:
+==================================================
+7. Extração de threads
+======================
 
-- `neutral_summary`;
-- `scd_summary`;
-- `incivility_label`;
-- `derailment_risk`;
-- `derailment_point`;
-- `tone_markers`;
-- `tension_triggers`.
-
-Na interface, exibir esses campos como “not computed yet”.
-
-Não implementar classificação agora.
-
-### Arquivos adicionais esperados
+Preservar WCC/componentes conectados como baseline principal, mas adicionar pós-processamento mais explícito.
 
 Gerar:
 
-```text
-reports/neo4j_threads.html
-reports/neo4j_threads_summary.md
-reports/thread_graphs/
-apps/thread_explorer.py
-```
+* `threads.csv`
+* `thread_messages.csv`
+* `threads.json`
+* `thread_summaries.csv`
 
-Se usar Streamlit, atualizar `requirements.txt` com:
+Cada thread deve conter:
 
-```text
-streamlit
-plotly
-pyvis
-networkx
-pandas
-```
+* thread_id ou predicted_thread_id
+* root_message_id
+* title
+* status
+* start_timestamp
+* end_timestamp
+* duration_seconds
+* message_count
+* participant_count
+* avg_confidence
+* min_confidence
+* explicit_edge_count
+* inferred_edge_count
+* uncertain_edge_count
+* channel_name
+* keywords
+* conversation_shape
+* needs_review_reason
 
-Se optar por HTML estático com JavaScript, evitar dependências externas online. Preferir arquivos locais ou CDN opcional documentada.
+Cada linha de `thread_messages.csv` deve conter:
 
-### Critérios de aceitação da visualização
+* thread_id
+* message_id
+* parent_message_id
+* position_in_thread
+* author_id_anonymized
+* timestamp
+* content_normalized
+* confidence_to_parent
+* edge_type_to_parent
+* method_to_parent
+* evidence_json
+* alternative_parents_json
+* is_root
 
-A visualização será considerada satisfatória quando:
+Critérios para status:
 
-1. permitir navegar pelas threads reconstruídas;
-2. mostrar mensagens em ordem temporal;
-3. mostrar grafo de resposta/continuidade;
-4. mostrar confiança de cada link;
-5. mostrar evidências de cada link;
-6. destacar threads ambíguas;
-7. permitir identificar possíveis erros de merge e split;
-8. não expor IDs reais de usuários;
-9. carregar os arquivos gerados pelo pipeline;
-10. preparar o caminho para futura anotação manual e classificação de incivilidade.
+* ok
+* ambiguous
+* needs_review
+
+Marcar `needs_review` quando:
+
+* confiança média baixa;
+* muitos links incertos;
+* muitos candidatos alternativos próximos;
+* grande lacuna temporal interna;
+* thread grande demais;
+* possível over-merge;
+* possível over-split.
+
+==================================================
+8. Avaliação sem anotação manual
+================================
+
+Como não há classificação manual, implementar avaliação estrutural e diagnóstica, não avaliação como gold standard definitivo.
+
+Gerar:
+
+`reports/metrics/disentanglement_metrics.json`
+`reports/metrics/disentanglement_metrics.csv`
+`reports/metrics/threshold_sensitivity.csv`
+`reports/metrics/ablation_results.csv`
+`reports/errors/ambiguous_edges.csv`
+`reports/errors/low_confidence_threads.csv`
+`reports/errors/possible_overmerged_threads.csv`
+`reports/errors/possible_oversplit_threads.csv`
+
+Métricas de link prediction, usando explicit replies como referência quando disponíveis:
+
+* coverage;
+* explicit_reply_recovery_rate;
+* precision@1 contra explicit replies;
+* recall@1 contra explicit replies;
+* top_k_recall, se alternative_parents_json existir.
+
+Métricas estruturais, usando thread_id apenas como silver reference quando existir:
+
+* número de threads previstas;
+* tamanho médio e mediano;
+* distribuição de tamanhos;
+* fragmentation;
+* mixing;
+* pairwise precision;
+* pairwise recall;
+* pairwise F1;
+* ARI;
+* NMI;
+* purity.
+
+Métricas de estabilidade:
+
+* rodar ou simular avaliação com thresholds 0.40, 0.45, 0.50, 0.55, 0.60, 0.65;
+* registrar número de threads, singletons, média de confiança, fragmentation e mixing para cada threshold.
+
+A documentação deve deixar claro:
+
+* sem anotação manual, essas métricas não provam verdade conversacional definitiva;
+* elas servem para diagnóstico, comparação de configurações e robustez estrutural;
+* explicit replies e thread_id são referências fracas ou estruturais.
+
+==================================================
+9. Interface própria de inspeção de conversas
+=============================================
+
+Melhorar a interface existente sem perder o modo HTML estático.
+
+A interface principal deve continuar funcionando offline, sem Neo4j, sem internet e sem CDN.
+
+Atualizar:
+
+`reports/neo4j_threads.html`
+
+A interface deve ter:
+
+1. Overview:
+
+* total de mensagens;
+* total de threads;
+* total de singletons;
+* média/mediana de mensagens por thread;
+* contagem de explicit/inferred/uncertain edges;
+* confiança média;
+* distribuição de tamanho;
+* distribuição de status;
+* canais processados.
+
+2. Lista de threads:
+
+* filtro por status;
+* filtro por tamanho mínimo/máximo;
+* filtro por confiança;
+* filtro por canal;
+* busca textual;
+* filtro por links incertos;
+* ordenação por tamanho, confiança, duração e status.
+
+3. Thread detail:
+   Mostrar mensagens em ordem temporal:
+
+* autor anonimizado;
+* timestamp;
+* conteúdo normalizado;
+* badge root/explicit/inferred/uncertain;
+* parent escolhido;
+* confiança do vínculo;
+* método;
+* evidências compactas;
+* candidatos alternativos.
+
+4. Evidence inspector:
+   Ao selecionar uma mensagem/edge, mostrar:
+
+* source message;
+* target message;
+* delta_seconds;
+* semantic_similarity;
+* tfidf_similarity;
+* temporal_score;
+* lexical_overlap;
+* mention_score;
+* question_answer_score;
+* participant_continuity_score;
+* score_final;
+* alternative parents;
+* evidence_json formatado.
+
+5. Ambiguity view:
+   Mostrar automaticamente:
+
+* threads com baixa confiança;
+* links incertos;
+* mensagens com múltiplos pais próximos;
+* grandes lacunas temporais;
+* possíveis merges ruins;
+* possíveis splits excessivos;
+* singletons suspeitos.
+
+6. Timeline:
+   Adicionar uma visualização simples em HTML/JS local:
+
+* pontos por mensagem ao longo do tempo;
+* cor por thread/status;
+* destaque para lacunas temporais;
+* não depender de bibliotecas externas via CDN.
+
+As páginas individuais em `reports/thread_graphs/*.html` podem continuar textuais, mas devem mostrar:
+
+* resumo da thread;
+* mensagens ordenadas;
+* parent de cada mensagem;
+* evidências;
+* links para voltar ao relatório principal.
+
+Não expor IDs reais de usuários.
+
+==================================================
+10. Exportação para Neo4j
+=========================
+
+Preservar export atual, mas adicionar artefatos mais úteis para análise no Neo4j.
+
+Gerar em `exports/`:
+
+1. `neo4j_users.csv`
+2. `neo4j_messages.csv`
+3. `neo4j_threads.csv`
+4. `neo4j_authored_relationships.csv`
+5. `neo4j_belongs_to_relationships.csv`
+6. `neo4j_replies_to_relationships.csv`
+7. `neo4j_predicted_conversations.csv`
+8. `neo4j_message_belongs_to_predicted_conversation.csv`
+9. `neo4j_predicted_replies_to_relationships.csv`
+10. `neo4j_message_disentanglement_properties.csv`
+11. `neo4j_import.cypher`
+12. `neo4j_import_disentanglement.cypher`
+13. `README_NEO4J_IMPORT.md`
+
+Modelo final desejado no Neo4j:
+
+(:User)-[:AUTHORED]->(:Message)
+
+(:Message)-[:REPLIES_TO]->(:Message)
+// relação original ou extraída explicitamente
+
+(:Message)-[:PREDICTED_REPLIES_TO]->(:Message)
+// relação inferida pelo pipeline
+
+(:Message)-[:BELONGS_TO]->(:Thread)
+// thread candidata antiga ou original, quando existir
+
+(:Message)-[:BELONGS_TO_PREDICTED_CONVERSATION]->(:PredictedConversation)
+
+(:PredictedConversation)
+// nó agregado da conversa reconstruída
+
+`neo4j_predicted_conversations.csv`:
+
+* predicted_conversation_id
+* root_message_id
+* title
+* status
+* method
+* size
+* participant_count
+* start_timestamp
+* end_timestamp
+* duration_seconds
+* avg_confidence
+* min_confidence
+* explicit_edge_count
+* inferred_edge_count
+* uncertain_edge_count
+* channel_name
+* guild_name
+* keywords
+* conversation_shape
+* needs_review_reason
+
+`neo4j_message_belongs_to_predicted_conversation.csv`:
+
+* message_id
+* predicted_conversation_id
+* confidence
+* method
+* position_in_thread
+* is_root
+
+`neo4j_predicted_replies_to_relationships.csv`:
+
+* source_message_id
+* target_message_id
+* confidence
+* method
+* edge_type
+* semantic_similarity
+* tfidf_similarity
+* time_delta_seconds
+* evidence_json
+* model_version
+
+`neo4j_message_disentanglement_properties.csv`:
+
+* message_id
+* predicted_conversation_id
+* predicted_parent_id
+* disentanglement_confidence
+* disentanglement_method
+* is_conversation_root
+* thread_position
+* thread_status
+
+O Cypher deve:
+
+* criar constraint para `PredictedConversation.id`;
+* atualizar propriedades de `Message`;
+* criar relações `PREDICTED_REPLIES_TO`;
+* criar relações `BELONGS_TO_PREDICTED_CONVERSATION`;
+* ser compatível com importação local via `file:///`;
+* documentar no README que, no Neo4j Aura, os arquivos devem ser importados via Data Importer ou URLs HTTPS.
+
+==================================================
+11. CLI
+=======
+
+Preservar o comando atual:
+
+python -m discord_disentanglement run ...
+
+Adicionar ou documentar comandos incrementais, se a arquitetura permitir:
+
+python -m discord_disentanglement validate ...
+python -m discord_disentanglement embed ...
+python -m discord_disentanglement evaluate ...
+python -m discord_disentanglement export-neo4j ...
+
+O comando principal `run` deve continuar executando de ponta a ponta.
+
+Adicionar flags:
+
+* `--config`
+* `--use-embeddings`
+* `--no-embeddings`
+* `--threshold`
+* `--export-neo4j`
+* `--generate-report`
+
+Não quebrar a chamada antiga documentada:
+
+uv run python -m discord_disentanglement run `  --input data/processed/software_messages.parquet`
+--guild-name Neo4j `  --out data/processed/neo4j_threads`
+--threshold 0.50
+
+==================================================
+12. Testes
+==========
+
+Atualizar testes existentes e adicionar novos testes para:
+
+* preservar explicit reply com score 1.0;
+* garantir que menção não vira edge automaticamente;
+* manter mensagens curtas;
+* filtrar guild/canal antes da inferência;
+* gerar embeddings ou usar fallback TF-IDF;
+* incluir candidatos por similaridade;
+* calcular semantic_similarity;
+* gerar candidate_features.csv;
+* marcar uncertain quando scores forem próximos;
+* extrair threads;
+* marcar needs_review;
+* gerar métricas;
+* gerar HTML principal;
+* gerar export Neo4j com PredictedConversation;
+* não usar thread_id como feature direta;
+* garantir que nenhum ID real de usuário apareça nos relatórios HTML.
+
+Criar ou manter fixture com:
+
+* duas conversas intercaladas;
+* uma reply explícita;
+* uma menção;
+* uma mensagem curta;
+* uma resposta tardia;
+* uma mensagem que inicia nova thread;
+* uma conversa técnica com código;
+* uma conversa com URL inválida;
+* um caso ambíguo com dois pais possíveis.
+
+==================================================
+13. Documentação
+================
+
+Atualizar documentação sem apagar o histórico.
+
+Criar ou atualizar:
+
+`docs/methodology/DISENTANGLEMENT_V2_METHOD.md`
+
+Esse documento deve explicar:
+
+* o que mudou em relação à v1;
+* por que embeddings foram adicionados;
+* por que o método continua inferindo mensagem→mensagem;
+* por que não usamos clustering semântico global como método principal;
+* como explicit replies são usados;
+* como candidatos são gerados;
+* como score híbrido é calculado;
+* como threads são extraídas;
+* como a avaliação funciona sem anotação manual;
+* como interpretar métricas silver-label;
+* como abrir a interface;
+* como importar no Neo4j;
+* limitações.
+
+Deixar claro:
+
+* o pipeline não faz incivilidade;
+* o pipeline não faz toxicidade;
+* o pipeline não afirma produzir ground truth definitivo;
+* sem anotação manual, a avaliação é estrutural, diagnóstica e comparativa;
+* o Neo4j é usado como camada de grafo para exploração posterior;
+* a interface própria é usada para observar as mensagens nas threads.
+
+==================================================
+14. Critérios de aceitação
+==========================
+
+A tarefa estará concluída quando:
+
+1. O comando antigo continuar funcionando.
+2. O pipeline gerar os artefatos antigos.
+3. O pipeline gerar embeddings ou cair corretamente para TF-IDF.
+4. O candidate generation incluir sinais temporais, participantes, TF-IDF e embeddings.
+5. O score final preservar evidence_json.
+6. Explicit replies continuarem vencendo a heurística.
+7. Menções não criarem aresta automaticamente.
+8. Mensagens curtas forem preservadas.
+9. Threads forem extraídas e marcadas com status.
+10. Métricas estruturais forem geradas.
+11. Sensibilidade por threshold for gerada.
+12. O HTML principal permitir observar conversas reconstruídas.
+13. A interface mostrar mensagens, pais, scores, evidências e ambiguidades.
+14. Artefatos Neo4j enriquecidos forem gerados.
+15. Testes principais passarem.
+16. A documentação explicar a v2 e suas limitações.
+
+Implemente essa evolução incremental agora.

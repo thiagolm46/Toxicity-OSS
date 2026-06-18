@@ -12,6 +12,7 @@ from typing import Any
 import networkx as nx
 import pandas as pd
 
+from .embeddings import build_message_embeddings, embedding_cosine
 from .io import load_discord_export
 from .models import EdgeRecord, MessageRecord, ThreadRecord
 from .reports import (
@@ -57,6 +58,15 @@ class DisentanglementConfig:
     split_gap_hours: float = 6.0
     preserve_raw_content: bool = False
     export_neo4j: bool = True
+    use_embeddings: bool = False
+    embedding_model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    embedding_batch_size: int = 8
+    embedding_min_batch_size: int = 1
+    embedding_max_seq_length: int | None = 256
+    embedding_device: str = "auto"
+    embedding_precision: str = "fp16"
+    generate_report: bool = True
+    evaluation_thresholds: tuple[float, ...] = (0.40, 0.45, 0.50, 0.55, 0.60, 0.65)
 
 
 def run_pipeline(config: DisentanglementConfig) -> dict[str, Path]:
@@ -80,12 +90,25 @@ def run_pipeline(config: DisentanglementConfig) -> dict[str, Path]:
 
     out_dir = config.out_dir
     reports_dir = out_dir / "reports"
+    metrics_dir = reports_dir / "metrics"
+    errors_dir = reports_dir / "errors"
     exports_dir = out_dir / "exports"
     graph_reports_dir = reports_dir / "thread_graphs"
-    for directory in (out_dir, reports_dir, exports_dir, graph_reports_dir):
+    for directory in (out_dir, reports_dir, metrics_dir, errors_dir, exports_dir, graph_reports_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
     explicit_edges = extract_explicit_edges(messages)
+    embedding_result = build_message_embeddings(
+        messages=messages,
+        output_dir=out_dir,
+        enabled=config.use_embeddings,
+        model_name=config.embedding_model_name,
+        batch_size=config.embedding_batch_size,
+        min_batch_size=config.embedding_min_batch_size,
+        max_seq_length=config.embedding_max_seq_length,
+        device=config.embedding_device,
+        precision=config.embedding_precision,
+    )
     candidate_pairs = generate_candidate_pairs(
         messages=messages,
         explicit_edges=explicit_edges,
@@ -95,6 +118,8 @@ def run_pipeline(config: DisentanglementConfig) -> dict[str, Path]:
         time_window_hours=config.time_window_hours,
         similarity_scan_limit=config.similarity_scan_limit,
         max_candidates_per_message=config.max_candidates_per_message,
+        embedding_vectors=embedding_result.vectors,
+        embedding_provider=embedding_result.provider,
     )
     inferred_edges = select_inferred_edges(
         candidate_pairs=candidate_pairs,
@@ -127,6 +152,7 @@ def run_pipeline(config: DisentanglementConfig) -> dict[str, Path]:
     messages_df.to_csv(out_dir / "messages_normalized.csv", index=False)
     explicit_df.to_csv(out_dir / "edges_explicit.csv", index=False)
     candidate_df.to_csv(out_dir / "candidate_pairs.csv", index=False)
+    candidate_df.to_csv(out_dir / "candidate_features.csv", index=False)
     inferred_df.to_csv(out_dir / "edges_inferred.csv", index=False)
     graph_edges_df.to_csv(out_dir / "graph_edges.csv", index=False)
     threads_df.to_csv(out_dir / "threads.csv", index=False)
@@ -135,26 +161,36 @@ def run_pipeline(config: DisentanglementConfig) -> dict[str, Path]:
     review_df.to_csv(out_dir / "annotation_review.csv", index=False)
     write_threads_json(threads, thread_messages, out_dir / "threads.json")
     write_graph_exports(graph, out_dir)
-    generate_thread_graph_reports(
-        threads=threads,
-        messages=messages,
-        graph_edges=graph_edges,
-        output_dir=graph_reports_dir,
-    )
-    generate_main_html_report(
-        threads=threads,
-        messages=messages,
-        graph_edges=graph_edges,
-        thread_messages=thread_messages,
-        candidate_pairs=candidate_pairs,
-        output_path=reports_dir / "neo4j_threads.html",
-    )
+    if config.generate_report:
+        generate_thread_graph_reports(
+            threads=threads,
+            messages=messages,
+            graph_edges=graph_edges,
+            output_dir=graph_reports_dir,
+        )
+        generate_main_html_report(
+            threads=threads,
+            messages=messages,
+            graph_edges=graph_edges,
+            thread_messages=thread_messages,
+            candidate_pairs=candidate_pairs,
+            output_path=reports_dir / "neo4j_threads.html",
+        )
     generate_summary_markdown(
         threads=threads,
         messages=messages,
         graph_edges=graph_edges,
         merge_suggestions=merge_suggestions,
         output_path=reports_dir / "neo4j_threads_summary.md",
+    )
+    write_diagnostic_metrics(
+        messages=messages,
+        threads=threads,
+        graph_edges=graph_edges,
+        candidate_pairs=candidate_pairs,
+        thresholds=config.evaluation_thresholds,
+        metrics_dir=metrics_dir,
+        errors_dir=errors_dir,
     )
     if config.export_neo4j:
         write_neo4j_exports(
@@ -169,6 +205,7 @@ def run_pipeline(config: DisentanglementConfig) -> dict[str, Path]:
         "messages": out_dir / "messages_normalized.csv",
         "explicit_edges": out_dir / "edges_explicit.csv",
         "candidate_pairs": out_dir / "candidate_pairs.csv",
+        "candidate_features": out_dir / "candidate_features.csv",
         "inferred_edges": out_dir / "edges_inferred.csv",
         "graph_edges": out_dir / "graph_edges.csv",
         "threads": out_dir / "threads.csv",
@@ -177,13 +214,30 @@ def run_pipeline(config: DisentanglementConfig) -> dict[str, Path]:
         "thread_summaries": out_dir / "thread_summaries.csv",
         "html_report": reports_dir / "neo4j_threads.html",
         "summary": reports_dir / "neo4j_threads_summary.md",
+        "metrics_json": metrics_dir / "disentanglement_metrics.json",
+        "metrics_csv": metrics_dir / "disentanglement_metrics.csv",
+        "threshold_sensitivity": metrics_dir / "threshold_sensitivity.csv",
+        "ablation_results": metrics_dir / "ablation_results.csv",
+        "ambiguous_edges": errors_dir / "ambiguous_edges.csv",
+        "low_confidence_threads": errors_dir / "low_confidence_threads.csv",
+        "possible_overmerged_threads": errors_dir / "possible_overmerged_threads.csv",
+        "possible_oversplit_threads": errors_dir / "possible_oversplit_threads.csv",
+        "embeddings": out_dir / "message_embeddings.npy",
+        "embedding_index": out_dir / "message_embedding_index.csv",
+        "embedding_metadata": out_dir / "embedding_metadata.json",
         "neo4j_users": exports_dir / "neo4j_users.csv",
         "neo4j_threads": exports_dir / "neo4j_threads.csv",
         "neo4j_messages": exports_dir / "neo4j_messages.csv",
         "neo4j_authored": exports_dir / "neo4j_authored_relationships.csv",
         "neo4j_belongs_to": exports_dir / "neo4j_belongs_to_relationships.csv",
         "neo4j_replies_to": exports_dir / "neo4j_replies_to_relationships.csv",
+        "neo4j_predicted_conversations": exports_dir / "neo4j_predicted_conversations.csv",
+        "neo4j_message_belongs_to_predicted_conversation": exports_dir / "neo4j_message_belongs_to_predicted_conversation.csv",
+        "neo4j_predicted_replies_to": exports_dir / "neo4j_predicted_replies_to_relationships.csv",
+        "neo4j_message_disentanglement_properties": exports_dir / "neo4j_message_disentanglement_properties.csv",
         "cypher": exports_dir / "neo4j_import.cypher",
+        "disentanglement_cypher": exports_dir / "neo4j_import_disentanglement.cypher",
+        "neo4j_readme": exports_dir / "README_NEO4J_IMPORT.md",
     }
 
 
@@ -338,8 +392,12 @@ def generate_candidate_pairs(
     time_window_hours: float,
     similarity_scan_limit: int,
     max_candidates_per_message: int,
+    embedding_vectors: Any = None,
+    embedding_provider: str = "tfidf_fallback",
 ) -> list[dict[str, Any]]:
     vectors = build_tfidf_vectors([message.tokens for message in messages])
+    embedding_vectors = [] if embedding_vectors is None else embedding_vectors
+    has_embeddings = len(embedding_vectors) > 0
     index_by_id = {message.message_id: index for index, message in enumerate(messages)}
     explicit_pairs = {
         (edge.source_message_id, edge.target_message_id): edge for edge in explicit_edges
@@ -376,9 +434,16 @@ def generate_candidate_pairs(
         scan_start = max(0, source_index - similarity_scan_limit)
         for target_index in range(scan_start, source_index):
             target = messages[target_index]
-            semantic = cosine_similarity(vectors[source_index], vectors[target_index])
-            if semantic >= 0.12:
+            tfidf = cosine_similarity(vectors[source_index], vectors[target_index])
+            semantic = (
+                embedding_cosine(embedding_vectors, source_index, target_index)
+                if has_embeddings
+                else tfidf
+            )
+            if tfidf >= 0.12:
                 candidates[target_index].add("text_similarity")
+            if semantic >= 0.25 and has_embeddings:
+                candidates[target_index].add("embedding_similarity")
             if set(source.technical_tokens) & set(target.technical_tokens):
                 candidates[target_index].add("shared_technical_tokens")
 
@@ -400,18 +465,25 @@ def generate_candidate_pairs(
                 target=target,
                 source_vector=vectors[source_index],
                 target_vector=vectors[target_index],
+                source_embedding=embedding_vectors[source_index] if has_embeddings else None,
+                target_embedding=embedding_vectors[target_index] if has_embeddings else None,
                 source_index=source_index,
                 target_index=target_index,
                 messages=messages,
                 explicit_edge=explicit_pairs.get((source.message_id, target.message_id)),
+                embedding_provider=embedding_provider,
             )
             score = score_pair(features)
             row = {
                 "source_message_id": source.message_id,
                 "target_message_id": target.message_id,
+                "candidate_sources": ";".join(sorted(candidates[target_index])),
                 "candidate_reason_json": json.dumps(sorted(candidates[target_index]), ensure_ascii=False),
+                "source_timestamp": source.timestamp_iso,
+                "target_timestamp": target.timestamp_iso,
                 **features,
                 "score": score,
+                "score_final": score,
                 "is_above_threshold": score >= threshold,
                 "is_uncertain": threshold <= score < uncertain_threshold,
             }
@@ -420,6 +492,20 @@ def generate_candidate_pairs(
         source_rows.sort(key=lambda row: (-float(row["score"]), float(row["delta_seconds"])))
         for rank, row in enumerate(source_rows, start=1):
             row["candidate_rank"] = rank
+            row["candidate_rank_by_time"] = rank
+        semantic_ranked = sorted(
+            source_rows,
+            key=lambda row: (-float(row.get("semantic_similarity", 0.0)), float(row["delta_seconds"])),
+        )
+        for rank, row in enumerate(semantic_ranked, start=1):
+            row["candidate_rank_by_semantic_similarity"] = rank
+        for row in source_rows:
+            best_score = float(source_rows[0]["score"]) if source_rows else 0.0
+            second_score = float(source_rows[1]["score"]) if len(source_rows) > 1 else 0.0
+            row["score_gap_to_second_best"] = round(best_score - second_score, 6) if rank else 0.0
+            row["number_of_close_candidates"] = sum(
+                1 for candidate in source_rows if abs(best_score - float(candidate["score"])) <= 0.08
+            )
         rows.extend(source_rows)
         author_to_indices[source.author_id or "unknown"].append(source_index)
         if source.native_thread_id:
@@ -433,13 +519,20 @@ def calculate_pair_features(
     target: MessageRecord,
     source_vector: dict[str, float],
     target_vector: dict[str, float],
+    source_embedding: list[float] | None,
+    target_embedding: list[float] | None,
     source_index: int,
     target_index: int,
     messages: list[MessageRecord],
     explicit_edge: EdgeRecord | None,
+    embedding_provider: str = "tfidf_fallback",
 ) -> dict[str, Any]:
     delta_seconds = max(0.0, (source.timestamp - target.timestamp).total_seconds())
-    semantic_similarity = cosine_similarity(source_vector, target_vector)
+    tfidf_similarity = cosine_similarity(source_vector, target_vector)
+    if _has_embedding(source_embedding) and _has_embedding(target_embedding):
+        semantic_similarity = _dot_embedding(source_embedding, target_embedding)
+    else:
+        semantic_similarity = tfidf_similarity
     lexical = lexical_overlap(source.tokens, target.tokens)
     source_mentions_target = bool(target.author_id and target.author_id in source.mentions)
     target_mentions_source = bool(source.author_id and source.author_id in target.mentions)
@@ -493,23 +586,30 @@ def calculate_pair_features(
         "target_mentions_source_author": target_mentions_source,
         "author_participated_recently": author_recent,
         "semantic_similarity": round(semantic_similarity, 6),
+        "tfidf_similarity": round(tfidf_similarity, 6),
+        "embedding_provider": embedding_provider,
         "lexical_overlap": round(lexical, 6),
+        "jaccard_token_overlap": round(lexical, 6),
         "shared_technical_tokens": json.dumps(shared_tech, ensure_ascii=False),
         "shared_technical_token_count": len(shared_tech),
         "technical_discussion_score": 1.0
         if shared_tech and (source_mentions_target or target_mentions_source or target_question > 0)
         else 0.0,
         "shared_url": bool(shared_urls),
+        "shared_url_marker": bool(shared_urls),
         "shared_url_hosts": json.dumps(shared_urls, ensure_ascii=False),
         "shared_code_error_marker": bool(source.code_or_error_marker and target.code_or_error_marker),
+        "shared_code_or_error_marker": bool(source.code_or_error_marker and target.code_or_error_marker),
         "target_has_question": target_question > 0,
         "source_looks_response": source_response > 0,
+        "source_is_probable_answer": source_response > 0,
         "source_starts_response_marker": source_response >= 1.0,
         "source_disagreement_marker": bool(DISAGREEMENT_RE.search(source.content_normalized)),
         "source_reason_marker": bool(REASON_RE.search(source.content_normalized)),
         "source_second_person": bool(SECOND_PERSON_RE.search(source.content_normalized)),
         "question_answer_score": round(question_answer, 6),
         "explicit_reply": bool(explicit_edge and explicit_edge.edge_type == "explicit_reply"),
+        "explicit_reply_exists": bool(explicit_edge and explicit_edge.edge_type == "explicit_reply"),
         "same_native_thread": same_native_thread,
         "same_channel": same_channel,
         "source_is_bot": source.is_bot,
@@ -604,9 +704,14 @@ def select_inferred_edges(
             for row in rows[1:4]
         ]
         close_alternative = bool(rows[1:2] and best_score - float(rows[1]["score"]) <= 0.08)
-        edge_type = "uncertain" if best_score < uncertain_threshold or close_alternative else "inferred"
+        edge_type = "uncertain_reply" if best_score < uncertain_threshold or close_alternative else "inferred_reply"
         evidence = _candidate_evidence(best)
         evidence["evidence_labels"] = evidence_labels(evidence)
+        evidence["score_heuristic"] = best_score
+        evidence["score_final"] = best_score
+        evidence["tfidf_similarity"] = best.get("tfidf_similarity", best.get("semantic_similarity", 0.0))
+        evidence["model_version"] = "hybrid_v2"
+        evidence["number_of_close_candidates"] = best.get("number_of_close_candidates", 0)
         edges.append(
             EdgeRecord(
                 source_message_id=source_id,
@@ -614,7 +719,7 @@ def select_inferred_edges(
                 edge_type=edge_type,
                 confidence=best_score,
                 evidence=evidence,
-                method="heuristic_v1",
+                method="hybrid_v2",
                 candidate_rank=1,
                 alternative_parents=alternatives,
             )
@@ -697,9 +802,10 @@ def extract_threads(
         participants = sorted({message.author_anon or "USER_UNKNOWN" for message in component})
         confidences = [edge.confidence for edge in internal_edges]
         avg_confidence = sum(confidences) / len(confidences) if confidences else 1.0
+        min_confidence = min(confidences) if confidences else 1.0
         explicit_count = sum(edge.edge_type in {"explicit_reply", "native_thread", "quoted_message_link"} for edge in internal_edges)
-        inferred_count = sum(edge.edge_type == "inferred" for edge in internal_edges)
-        uncertain_count = sum(edge.edge_type == "uncertain" for edge in internal_edges)
+        inferred_count = sum(edge.edge_type in {"inferred", "inferred_reply"} for edge in internal_edges)
+        uncertain_count = sum(edge.edge_type in {"uncertain", "uncertain_reply"} for edge in internal_edges)
         keywords = extract_keywords(component)
         shape = conversation_shape(component, keywords)
         short_ratio = sum(len(message.tokens) <= 3 for message in component) / len(component)
@@ -715,7 +821,7 @@ def extract_threads(
         if short_ratio > 0.50 and len(component) > 2:
             reasons.append("many_short_messages")
         for edge in internal_edges:
-            if edge.edge_type in {"inferred", "uncertain"}:
+            if edge.edge_type in {"inferred", "inferred_reply", "uncertain", "uncertain_reply"}:
                 source = message_by_id[edge.source_message_id]
                 target = message_by_id[edge.target_message_id]
                 if (source.timestamp - target.timestamp).total_seconds() > split_gap_seconds:
@@ -738,6 +844,7 @@ def extract_threads(
                 message_count=len(component),
                 participant_count=len(participants),
                 avg_confidence=round(avg_confidence, 6),
+                min_confidence=round(min_confidence, 6),
                 explicit_edge_count=explicit_count,
                 inferred_edge_count=inferred_count,
                 uncertain_edge_count=uncertain_count,
@@ -788,16 +895,23 @@ def build_thread_messages(
         rows.append(
             {
                 "thread_id": thread_id,
+                "predicted_thread_id": thread_id,
                 "position": positions[thread_id],
+                "position_in_thread": positions[thread_id],
                 "message_id": message.message_id,
                 "parent_message_id": parent_id,
                 "parent_score": parent_score,
+                "confidence_to_parent": parent_score,
                 "link_type": link_type,
+                "edge_type_to_parent": link_type,
+                "method_to_parent": edge.method if edge else "",
                 "evidence_json": json.dumps(evidence, ensure_ascii=False),
                 "alternative_parents_json": json.dumps(alternatives, ensure_ascii=False),
                 "author_id": message.author_anon,
+                "author_id_anonymized": message.author_anon,
                 "timestamp": message.timestamp_iso,
                 "content_normalized": message.content_normalized,
+                "is_root": not bool(parent_id),
                 "native_thread_id": message.native_thread_id or "",
                 "has_attachment": message.has_attachment,
                 "has_code_block": message.has_code_block,
@@ -860,9 +974,15 @@ def edges_to_dataframe(edges: list[EdgeRecord]) -> pd.DataFrame:
                 "edge_type": edge.edge_type,
                 "confidence": edge.confidence,
                 "method": edge.method,
+                "semantic_similarity": edge.evidence.get("semantic_similarity", ""),
+                "tfidf_similarity": edge.evidence.get("tfidf_similarity", ""),
+                "time_delta_seconds": edge.evidence.get("delta_seconds", ""),
+                "score_heuristic": edge.evidence.get("score_heuristic", edge.confidence),
+                "score_final": edge.evidence.get("score_final", edge.confidence),
                 "candidate_rank": edge.candidate_rank or "",
                 "evidence_json": json.dumps(edge.evidence, ensure_ascii=False),
                 "alternative_parents_json": json.dumps(edge.alternative_parents, ensure_ascii=False),
+                "model_version": edge.evidence.get("model_version", edge.method),
             }
             for edge in edges
         ],
@@ -872,9 +992,15 @@ def edges_to_dataframe(edges: list[EdgeRecord]) -> pd.DataFrame:
             "edge_type",
             "confidence",
             "method",
+            "semantic_similarity",
+            "tfidf_similarity",
+            "time_delta_seconds",
+            "score_heuristic",
+            "score_final",
             "candidate_rank",
             "evidence_json",
             "alternative_parents_json",
+            "model_version",
         ],
     )
 
@@ -884,22 +1010,28 @@ def threads_to_dataframe(threads: list[ThreadRecord]) -> pd.DataFrame:
         [
             {
                 "thread_id": thread.thread_id,
+                "predicted_thread_id": thread.thread_id,
                 "root_message_id": thread.root_message_id,
                 "message_ids": json.dumps(thread.message_ids, ensure_ascii=False),
                 "participants": json.dumps(thread.participants, ensure_ascii=False),
                 "start_time": thread.start_time.isoformat().replace("+00:00", "Z"),
+                "start_timestamp": thread.start_time.isoformat().replace("+00:00", "Z"),
                 "end_time": thread.end_time.isoformat().replace("+00:00", "Z"),
+                "end_timestamp": thread.end_time.isoformat().replace("+00:00", "Z"),
                 "duration_seconds": thread.duration_seconds,
                 "message_count": thread.message_count,
                 "participant_count": thread.participant_count,
                 "avg_confidence": thread.avg_confidence,
+                "min_confidence": thread.min_confidence,
                 "explicit_edge_count": thread.explicit_edge_count,
                 "inferred_edge_count": thread.inferred_edge_count,
                 "uncertain_edge_count": thread.uncertain_edge_count,
+                "channel_name": "",
                 "keywords": json.dumps(thread.keywords, ensure_ascii=False),
                 "conversation_shape": thread.conversation_shape,
                 "status": thread.status,
                 "needs_review_reasons": json.dumps(thread.needs_review_reasons, ensure_ascii=False),
+                "needs_review_reason": json.dumps(thread.needs_review_reasons, ensure_ascii=False),
                 "title": thread.title,
             }
             for thread in threads
@@ -951,6 +1083,7 @@ def write_threads_json(
         payload.append(
             {
                 "thread_id": thread.thread_id,
+                "predicted_thread_id": thread.thread_id,
                 "root_message_id": thread.root_message_id,
                 "participants": thread.participants,
                 "start_time": thread.start_time.isoformat().replace("+00:00", "Z"),
@@ -959,6 +1092,7 @@ def write_threads_json(
                 "message_count": thread.message_count,
                 "participant_count": thread.participant_count,
                 "avg_confidence": thread.avg_confidence,
+                "min_confidence": thread.min_confidence,
                 "explicit_edge_count": thread.explicit_edge_count,
                 "inferred_edge_count": thread.inferred_edge_count,
                 "uncertain_edge_count": thread.uncertain_edge_count,
@@ -988,6 +1122,154 @@ def write_graph_exports(graph: nx.DiGraph, out_dir: Path) -> None:
     (out_dir / "graph.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def write_diagnostic_metrics(
+    messages: list[MessageRecord],
+    threads: list[ThreadRecord],
+    graph_edges: list[EdgeRecord],
+    candidate_pairs: list[dict[str, Any]],
+    thresholds: tuple[float, ...],
+    metrics_dir: Path,
+    errors_dir: Path,
+) -> None:
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    errors_dir.mkdir(parents=True, exist_ok=True)
+    explicit_edges = [edge for edge in graph_edges if edge.edge_type == "explicit_reply"]
+    predicted_by_source = primary_edge_by_source(graph_edges)
+    explicit_recovered = sum(
+        1
+        for edge in explicit_edges
+        if predicted_by_source.get(edge.source_message_id)
+        and predicted_by_source[edge.source_message_id].target_message_id == edge.target_message_id
+    )
+    linkable_messages = max(1, len(messages) - 1)
+    thread_by_message = assign_thread_ids(messages, threads)
+    native_labels = {
+        message.message_id: str(message.native_thread_id)
+        for message in messages
+        if message.native_thread_id
+    }
+    structural = _cluster_metrics(thread_by_message, native_labels)
+    sizes = [thread.message_count for thread in threads]
+    edge_counts = Counter(edge.edge_type for edge in graph_edges)
+    metrics = {
+        "note": (
+            "Diagnostic metrics only. Without manual annotation, explicit replies and native thread ids "
+            "are weak/silver references, not definitive conversational ground truth."
+        ),
+        "message_count": len(messages),
+        "thread_count": len(threads),
+        "coverage": len(predicted_by_source) / linkable_messages,
+        "explicit_reply_count": len(explicit_edges),
+        "explicit_reply_recovery_rate": explicit_recovered / len(explicit_edges) if explicit_edges else 0.0,
+        "precision_at_1_explicit": explicit_recovered / len(explicit_edges) if explicit_edges else 0.0,
+        "recall_at_1_explicit": explicit_recovered / len(explicit_edges) if explicit_edges else 0.0,
+        "singletons": sum(size == 1 for size in sizes),
+        "avg_thread_size": sum(sizes) / len(sizes) if sizes else 0.0,
+        "median_thread_size": float(pd.Series(sizes).median()) if sizes else 0.0,
+        "explicit_edges": sum(edge_counts.get(kind, 0) for kind in ("explicit_reply", "native_thread", "quoted_message_link")),
+        "inferred_edges": edge_counts.get("inferred", 0) + edge_counts.get("inferred_reply", 0),
+        "uncertain_edges": edge_counts.get("uncertain", 0) + edge_counts.get("uncertain_reply", 0),
+        **structural,
+    }
+    (metrics_dir / "disentanglement_metrics.json").write_text(
+        json.dumps(metrics, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    pd.DataFrame([metrics]).to_csv(metrics_dir / "disentanglement_metrics.csv", index=False)
+
+    sensitivity_rows = []
+    explicit_edges_only = [edge for edge in graph_edges if edge.method == "explicit"]
+    for threshold in thresholds:
+        inferred = select_inferred_edges(
+            candidate_pairs=candidate_pairs,
+            explicit_edges=explicit_edges_only,
+            threshold=threshold,
+            uncertain_threshold=min(1.0, threshold + 0.10),
+        )
+        threshold_edges = explicit_edges_only + inferred
+        threshold_threads = extract_threads(messages, threshold_edges, split_gap_hours=6.0)
+        threshold_sizes = [thread.message_count for thread in threshold_threads]
+        threshold_thread_by_message = assign_thread_ids(messages, threshold_threads)
+        threshold_structural = _cluster_metrics(threshold_thread_by_message, native_labels)
+        sensitivity_rows.append(
+            {
+                "threshold": threshold,
+                "threads": len(threshold_threads),
+                "singletons": sum(size == 1 for size in threshold_sizes),
+                "avg_confidence": _avg_float([thread.avg_confidence for thread in threshold_threads]),
+                "fragmentation": threshold_structural.get("fragmentation", 0.0),
+                "mixing": threshold_structural.get("mixing", 0.0),
+            }
+        )
+    pd.DataFrame(sensitivity_rows).to_csv(metrics_dir / "threshold_sensitivity.csv", index=False)
+
+    ablations = [
+        {"ablation": "hybrid_v2", **metrics},
+        {
+            "ablation": "explicit_only",
+            "message_count": len(messages),
+            "thread_count": len(extract_threads(messages, explicit_edges_only, split_gap_hours=6.0)),
+            "coverage": len({edge.source_message_id for edge in explicit_edges_only}) / linkable_messages,
+        },
+    ]
+    pd.DataFrame(ablations).to_csv(metrics_dir / "ablation_results.csv", index=False)
+
+    pd.DataFrame(
+        [
+            {
+                "source_message_id": edge.source_message_id,
+                "target_message_id": edge.target_message_id,
+                "confidence": edge.confidence,
+                "edge_type": edge.edge_type,
+                "evidence_json": json.dumps(edge.evidence, ensure_ascii=False),
+                "alternative_parents_json": json.dumps(edge.alternative_parents, ensure_ascii=False),
+            }
+            for edge in graph_edges
+            if edge.edge_type in {"uncertain", "uncertain_reply"} or edge.alternative_parents
+        ]
+    ).to_csv(errors_dir / "ambiguous_edges.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "thread_id": thread.thread_id,
+                "message_count": thread.message_count,
+                "avg_confidence": thread.avg_confidence,
+                "min_confidence": thread.min_confidence,
+                "needs_review_reason": json.dumps(thread.needs_review_reasons, ensure_ascii=False),
+                "title": thread.title,
+            }
+            for thread in threads
+            if thread.avg_confidence < 0.60 or thread.uncertain_edge_count
+        ]
+    ).to_csv(errors_dir / "low_confidence_threads.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "thread_id": thread.thread_id,
+                "message_count": thread.message_count,
+                "participant_count": thread.participant_count,
+                "duration_seconds": thread.duration_seconds,
+                "needs_review_reason": json.dumps(thread.needs_review_reasons, ensure_ascii=False),
+                "title": thread.title,
+            }
+            for thread in threads
+            if thread.message_count >= 30 or "large_temporal_gap" in thread.needs_review_reasons
+        ]
+    ).to_csv(errors_dir / "possible_overmerged_threads.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "thread_id": thread.thread_id,
+                "message_count": thread.message_count,
+                "keywords": json.dumps(thread.keywords, ensure_ascii=False),
+                "title": thread.title,
+            }
+            for thread in threads
+            if thread.message_count == 1
+        ]
+    ).to_csv(errors_dir / "possible_oversplit_threads.csv", index=False)
+
+
 def write_neo4j_exports(
     messages: list[MessageRecord],
     threads: list[ThreadRecord],
@@ -1003,7 +1285,13 @@ def write_neo4j_exports(
     authored_path = output_dir / "neo4j_authored_relationships.csv"
     belongs_to_path = output_dir / "neo4j_belongs_to_relationships.csv"
     replies_to_path = output_dir / "neo4j_replies_to_relationships.csv"
+    predicted_conversations_path = output_dir / "neo4j_predicted_conversations.csv"
+    message_predicted_path = output_dir / "neo4j_message_belongs_to_predicted_conversation.csv"
+    predicted_replies_path = output_dir / "neo4j_predicted_replies_to_relationships.csv"
+    message_properties_path = output_dir / "neo4j_message_disentanglement_properties.csv"
     output_path = output_dir / "neo4j_import.cypher"
+    disentanglement_cypher_path = output_dir / "neo4j_import_disentanglement.cypher"
+    readme_path = output_dir / "README_NEO4J_IMPORT.md"
 
     user_ids = sorted({message.author_anon or "USER_UNKNOWN" for message in messages})
     with users_path.open("w", encoding="utf-8", newline="") as handle:
@@ -1102,6 +1390,152 @@ def write_neo4j_exports(
                 }
             )
 
+    message_by_id = {message.message_id: message for message in messages}
+    primary_edges = primary_edge_by_source(graph_edges)
+    positions_by_message: dict[str, int] = {}
+    for thread in threads:
+        for position, message_id in enumerate(thread.message_ids, start=1):
+            positions_by_message[message_id] = position
+
+    with predicted_conversations_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "predicted_conversation_id",
+                "root_message_id",
+                "title",
+                "status",
+                "method",
+                "size",
+                "participant_count",
+                "start_timestamp",
+                "end_timestamp",
+                "duration_seconds",
+                "avg_confidence",
+                "min_confidence",
+                "explicit_edge_count",
+                "inferred_edge_count",
+                "uncertain_edge_count",
+                "channel_name",
+                "guild_name",
+                "keywords",
+                "conversation_shape",
+                "needs_review_reason",
+            ],
+        )
+        writer.writeheader()
+        for thread in threads:
+            first_message = message_by_id.get(thread.message_ids[0])
+            writer.writerow(
+                {
+                    "predicted_conversation_id": thread.thread_id,
+                    "root_message_id": thread.root_message_id,
+                    "title": thread.title,
+                    "status": thread.status,
+                    "method": "hybrid_v2_wcc",
+                    "size": thread.message_count,
+                    "participant_count": thread.participant_count,
+                    "start_timestamp": thread.start_time.isoformat().replace("+00:00", "Z"),
+                    "end_timestamp": thread.end_time.isoformat().replace("+00:00", "Z"),
+                    "duration_seconds": thread.duration_seconds,
+                    "avg_confidence": thread.avg_confidence,
+                    "min_confidence": thread.min_confidence,
+                    "explicit_edge_count": thread.explicit_edge_count,
+                    "inferred_edge_count": thread.inferred_edge_count,
+                    "uncertain_edge_count": thread.uncertain_edge_count,
+                    "channel_name": first_message.channel_name if first_message else "",
+                    "guild_name": (first_message.guild_name or first_message.guild_id) if first_message else "",
+                    "keywords": json.dumps(thread.keywords, ensure_ascii=False),
+                    "conversation_shape": thread.conversation_shape,
+                    "needs_review_reason": json.dumps(thread.needs_review_reasons, ensure_ascii=False),
+                }
+            )
+
+    with message_predicted_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["message_id", "predicted_conversation_id", "confidence", "method", "position_in_thread", "is_root"],
+        )
+        writer.writeheader()
+        for message in messages:
+            edge = primary_edges.get(message.message_id)
+            thread_id = thread_by_message.get(message.message_id, "T_UNASSIGNED")
+            writer.writerow(
+                {
+                    "message_id": message.message_id,
+                    "predicted_conversation_id": thread_id,
+                    "confidence": edge.confidence if edge else 1.0,
+                    "method": edge.method if edge else "root",
+                    "position_in_thread": positions_by_message.get(message.message_id, 1),
+                    "is_root": str(edge is None).lower(),
+                }
+            )
+
+    with predicted_replies_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "source_message_id",
+                "target_message_id",
+                "confidence",
+                "method",
+                "edge_type",
+                "semantic_similarity",
+                "tfidf_similarity",
+                "time_delta_seconds",
+                "evidence_json",
+                "model_version",
+            ],
+        )
+        writer.writeheader()
+        for edge in graph_edges:
+            writer.writerow(
+                {
+                    "source_message_id": edge.source_message_id,
+                    "target_message_id": edge.target_message_id,
+                    "confidence": edge.confidence,
+                    "method": edge.method,
+                    "edge_type": edge.edge_type,
+                    "semantic_similarity": edge.evidence.get("semantic_similarity", ""),
+                    "tfidf_similarity": edge.evidence.get("tfidf_similarity", ""),
+                    "time_delta_seconds": edge.evidence.get("delta_seconds", ""),
+                    "evidence_json": json.dumps(edge.evidence, ensure_ascii=False),
+                    "model_version": edge.evidence.get("model_version", edge.method),
+                }
+            )
+
+    with message_properties_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "message_id",
+                "predicted_conversation_id",
+                "predicted_parent_id",
+                "disentanglement_confidence",
+                "disentanglement_method",
+                "is_conversation_root",
+                "thread_position",
+                "thread_status",
+            ],
+        )
+        writer.writeheader()
+        status_by_thread = {thread.thread_id: thread.status for thread in threads}
+        for message in messages:
+            edge = primary_edges.get(message.message_id)
+            thread_id = thread_by_message.get(message.message_id, "T_UNASSIGNED")
+            writer.writerow(
+                {
+                    "message_id": message.message_id,
+                    "predicted_conversation_id": thread_id,
+                    "predicted_parent_id": edge.target_message_id if edge else "",
+                    "disentanglement_confidence": edge.confidence if edge else 1.0,
+                    "disentanglement_method": edge.method if edge else "root",
+                    "is_conversation_root": str(edge is None).lower(),
+                    "thread_position": positions_by_message.get(message.message_id, 1),
+                    "thread_status": status_by_thread.get(thread_id, "unassigned"),
+                }
+            )
+
     lines = [
         "CREATE CONSTRAINT user_id IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE;",
         "CREATE CONSTRAINT message_id IF NOT EXISTS FOR (m:Message) REQUIRE m.id IS UNIQUE;",
@@ -1146,6 +1580,67 @@ def write_neo4j_exports(
     ]
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+    disentanglement_lines = [
+        "CREATE CONSTRAINT predicted_conversation_id IF NOT EXISTS FOR (c:PredictedConversation) REQUIRE c.id IS UNIQUE;",
+        "CREATE CONSTRAINT message_id IF NOT EXISTS FOR (m:Message) REQUIRE m.id IS UNIQUE;",
+        "",
+        "LOAD CSV WITH HEADERS FROM 'file:///neo4j_predicted_conversations.csv' AS row",
+        "MERGE (c:PredictedConversation {id: row.predicted_conversation_id})",
+        "SET c.title = row.title,",
+        "    c.status = row.status,",
+        "    c.method = row.method,",
+        "    c.size = toInteger(row.size),",
+        "    c.participant_count = toInteger(row.participant_count),",
+        "    c.start_timestamp = datetime(row.start_timestamp),",
+        "    c.end_timestamp = datetime(row.end_timestamp),",
+        "    c.avg_confidence = toFloat(row.avg_confidence),",
+        "    c.min_confidence = toFloat(row.min_confidence),",
+        "    c.channel_name = row.channel_name,",
+        "    c.guild_name = row.guild_name,",
+        "    c.keywords = row.keywords,",
+        "    c.needs_review_reason = row.needs_review_reason;",
+        "",
+        "LOAD CSV WITH HEADERS FROM 'file:///neo4j_message_belongs_to_predicted_conversation.csv' AS row",
+        "MATCH (m:Message {id: row.message_id}), (c:PredictedConversation {id: row.predicted_conversation_id})",
+        "MERGE (m)-[r:BELONGS_TO_PREDICTED_CONVERSATION]->(c)",
+        "SET r.confidence = toFloat(row.confidence),",
+        "    r.method = row.method,",
+        "    r.position_in_thread = toInteger(row.position_in_thread),",
+        "    r.is_root = toBoolean(row.is_root);",
+        "",
+        "LOAD CSV WITH HEADERS FROM 'file:///neo4j_predicted_replies_to_relationships.csv' AS row",
+        "MATCH (s:Message {id: row.source_message_id}), (t:Message {id: row.target_message_id})",
+        "MERGE (s)-[r:PREDICTED_REPLIES_TO]->(t)",
+        "SET r.confidence = toFloat(row.confidence),",
+        "    r.method = row.method,",
+        "    r.edge_type = row.edge_type,",
+        "    r.semantic_similarity = CASE row.semantic_similarity WHEN '' THEN null ELSE toFloat(row.semantic_similarity) END,",
+        "    r.tfidf_similarity = CASE row.tfidf_similarity WHEN '' THEN null ELSE toFloat(row.tfidf_similarity) END,",
+        "    r.time_delta_seconds = CASE row.time_delta_seconds WHEN '' THEN null ELSE toFloat(row.time_delta_seconds) END,",
+        "    r.evidence_json = row.evidence_json,",
+        "    r.model_version = row.model_version;",
+        "",
+        "LOAD CSV WITH HEADERS FROM 'file:///neo4j_message_disentanglement_properties.csv' AS row",
+        "MATCH (m:Message {id: row.message_id})",
+        "SET m.predicted_conversation_id = row.predicted_conversation_id,",
+        "    m.predicted_parent_id = row.predicted_parent_id,",
+        "    m.disentanglement_confidence = toFloat(row.disentanglement_confidence),",
+        "    m.disentanglement_method = row.disentanglement_method,",
+        "    m.is_conversation_root = toBoolean(row.is_conversation_root),",
+        "    m.thread_position = toInteger(row.thread_position),",
+        "    m.thread_status = row.thread_status;",
+        "",
+    ]
+    disentanglement_cypher_path.write_text("\n".join(disentanglement_lines) + "\n", encoding="utf-8")
+    readme_path.write_text(
+        "# Neo4j import\n\n"
+        "Copie os CSVs `neo4j_*.csv` para a pasta `import/` de uma instancia Neo4j local e execute "
+        "`neo4j_import.cypher` seguido de `neo4j_import_disentanglement.cypher`.\n\n"
+        "No Neo4j Aura, use o Data Importer ou URLs HTTPS acessiveis para carregar estes CSVs; "
+        "`file:///` e suportado apenas para importacao local.\n",
+        encoding="utf-8",
+    )
+
 
 def suggest_merges(threads: list[ThreadRecord]) -> list[dict[str, Any]]:
     suggestions: list[dict[str, Any]] = []
@@ -1166,6 +1661,120 @@ def suggest_merges(threads: list[ThreadRecord]) -> list[dict[str, Any]]:
                 }
             )
     return suggestions
+
+
+def _avg_float(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def _has_embedding(value: Any) -> bool:
+    return value is not None and hasattr(value, "__len__") and len(value) > 0
+
+
+def _dot_embedding(left: Any, right: Any) -> float:
+    if hasattr(left, "dot"):
+        return float(left.dot(right))
+    return float(sum(left_value * right_value for left_value, right_value in zip(left, right, strict=False)))
+
+
+def _cluster_metrics(
+    predicted: dict[str, str],
+    reference: dict[str, str],
+) -> dict[str, float]:
+    common_ids = sorted(set(predicted) & set(reference))
+    if len(common_ids) < 2:
+        return {
+            "pairwise_precision": 0.0,
+            "pairwise_recall": 0.0,
+            "pairwise_f1": 0.0,
+            "ari": 0.0,
+            "nmi": 0.0,
+            "purity": 0.0,
+            "fragmentation": 0.0,
+            "mixing": 0.0,
+        }
+    tp = fp = fn = tn = 0
+    for left_index, left_id in enumerate(common_ids):
+        for right_id in common_ids[left_index + 1 :]:
+            same_pred = predicted[left_id] == predicted[right_id]
+            same_ref = reference[left_id] == reference[right_id]
+            if same_pred and same_ref:
+                tp += 1
+            elif same_pred and not same_ref:
+                fp += 1
+            elif not same_pred and same_ref:
+                fn += 1
+            else:
+                tn += 1
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    total_pairs = tp + fp + fn + tn
+    expected_index = ((tp + fp) * (tp + fn) + (fn + tn) * (fp + tn)) / total_pairs if total_pairs else 0.0
+    max_index = ((tp + fp) + (tp + fn)) / 2
+    ari = (tp - expected_index) / (max_index - expected_index) if max_index != expected_index else 0.0
+
+    pred_groups: dict[str, list[str]] = defaultdict(list)
+    ref_groups: dict[str, list[str]] = defaultdict(list)
+    for message_id in common_ids:
+        pred_groups[predicted[message_id]].append(message_id)
+        ref_groups[reference[message_id]].append(message_id)
+    purity_total = 0
+    for group in pred_groups.values():
+        ref_counts = Counter(reference[message_id] for message_id in group)
+        purity_total += ref_counts.most_common(1)[0][1]
+    purity = purity_total / len(common_ids)
+    fragmentation = _avg_float(
+        [
+            len({predicted[message_id] for message_id in group}) / len(group)
+            for group in ref_groups.values()
+            if group
+        ]
+    )
+    mixing = _avg_float(
+        [
+            len({reference[message_id] for message_id in group}) / len(group)
+            for group in pred_groups.values()
+            if group
+        ]
+    )
+    nmi = _normalized_mutual_information(pred_groups, ref_groups, predicted, reference, common_ids)
+    return {
+        "pairwise_precision": precision,
+        "pairwise_recall": recall,
+        "pairwise_f1": f1,
+        "ari": ari,
+        "nmi": nmi,
+        "purity": purity,
+        "fragmentation": fragmentation,
+        "mixing": mixing,
+    }
+
+
+def _normalized_mutual_information(
+    pred_groups: dict[str, list[str]],
+    ref_groups: dict[str, list[str]],
+    predicted: dict[str, str],
+    reference: dict[str, str],
+    common_ids: list[str],
+) -> float:
+    total = len(common_ids)
+    if not total:
+        return 0.0
+    pred_counts = Counter(predicted[message_id] for message_id in common_ids)
+    ref_counts = Counter(reference[message_id] for message_id in common_ids)
+    mutual = 0.0
+    for pred_label, pred_group in pred_groups.items():
+        pred_count = len(pred_group)
+        pred_set = set(pred_group)
+        for ref_label, ref_group in ref_groups.items():
+            intersection = len(pred_set & set(ref_group))
+            if intersection:
+                mutual += (intersection / total) * math.log((intersection * total) / (pred_count * ref_counts[ref_label]))
+    pred_entropy = -sum((count / total) * math.log(count / total) for count in pred_counts.values())
+    ref_entropy = -sum((count / total) * math.log(count / total) for count in ref_counts.values())
+    denominator = (pred_entropy + ref_entropy) / 2
+    return mutual / denominator if denominator else 0.0
 
 
 def extract_keywords(messages: list[MessageRecord], limit: int = 8) -> list[str]:
@@ -1217,7 +1826,9 @@ def primary_edge_by_source(graph_edges: list[EdgeRecord]) -> dict[str, EdgeRecor
         "native_thread": 4,
         "quoted_message_link": 3,
         "inferred": 2,
+        "inferred_reply": 2,
         "uncertain": 1,
+        "uncertain_reply": 1,
     }
     primary: dict[str, EdgeRecord] = {}
     for edge in graph_edges:
@@ -1344,9 +1955,11 @@ def _candidate_evidence(row: dict[str, Any]) -> dict[str, Any]:
     keys = [
         "delta_seconds",
         "semantic_similarity",
+        "tfidf_similarity",
         "temporal_score",
         "mention_score",
         "lexical_overlap",
+        "jaccard_token_overlap",
         "question_answer_score",
         "same_native_thread_score",
         "participant_continuity_score",
@@ -1354,8 +1967,15 @@ def _candidate_evidence(row: dict[str, Any]) -> dict[str, Any]:
         "shared_technical_token_count",
         "technical_discussion_score",
         "shared_url",
+        "shared_url_marker",
         "shared_code_error_marker",
+        "shared_code_or_error_marker",
+        "explicit_reply_exists",
+        "score_gap_to_second_best",
+        "number_of_close_candidates",
         "candidate_rank",
+        "candidate_rank_by_time",
+        "candidate_rank_by_semantic_similarity",
         "candidate_reason_json",
     ]
     evidence = {key: row.get(key) for key in keys}

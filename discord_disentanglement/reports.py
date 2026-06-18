@@ -102,8 +102,8 @@ def generate_summary_markdown(
         edge.edge_type in {"explicit_reply", "native_thread", "quoted_message_link"}
         for edge in graph_edges
     )
-    inferred = sum(edge.edge_type == "inferred" for edge in graph_edges)
-    uncertain = sum(edge.edge_type == "uncertain" for edge in graph_edges)
+    inferred = sum(edge.edge_type in {"inferred", "inferred_reply"} for edge in graph_edges)
+    uncertain = sum(edge.edge_type in {"uncertain", "uncertain_reply"} for edge in graph_edges)
     total_edges = len(graph_edges) or 1
     status_counts = Counter(thread.status for thread in threads)
     channel_counts = Counter(message.channel_name or "unknown" for message in messages)
@@ -244,8 +244,8 @@ def build_report_payload(
         edge_counts.get(edge_type, 0)
         for edge_type in ("explicit_reply", "native_thread", "quoted_message_link")
       ),
-      "inferred_edges": edge_counts.get("inferred", 0),
-      "uncertain_edges": edge_counts.get("uncertain", 0),
+      "inferred_edges": edge_counts.get("inferred", 0) + edge_counts.get("inferred_reply", 0),
+      "uncertain_edges": edge_counts.get("uncertain", 0) + edge_counts.get("uncertain_reply", 0),
     },
     "threads": thread_payloads,
   }
@@ -263,6 +263,7 @@ def thread_payload(thread: ThreadRecord) -> dict[str, Any]:
         "participant_count": thread.participant_count,
         "participants": thread.participants,
         "avg_confidence": thread.avg_confidence,
+        "min_confidence": thread.min_confidence,
         "explicit_edge_count": thread.explicit_edge_count,
         "inferred_edge_count": thread.inferred_edge_count,
         "uncertain_edge_count": thread.uncertain_edge_count,

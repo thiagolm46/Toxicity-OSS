@@ -3,7 +3,7 @@ name = "discord-unveiled-software-filter"
 version = "0.1.0"
 description = "Pipeline para filtrar servidores de software no Discord-Unveiled e exportar dados para Parquet/DuckDB"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "duckdb>=1.5.1",
     "httpx>=0.28.1",
@@ -12,9 +12,14 @@ dependencies = [
     "pyarrow>=23.0.1",
     "pytest>=8.4.2",
     "rich>=14.3.3",
+    "sentence-transformers>=5.6.0",
+    "torch==2.5.1+cu121",
     "typer>=0.24.1",
     "zstandard>=0.25.0",
 ]
+
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/cu121"
 
 [project.scripts]
 discord-unveiled = "main:run"

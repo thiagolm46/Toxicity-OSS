@@ -1,0 +1,67 @@
+embeddings:
+  enabled: true
+  provider: sentence_transformers
+  model_name: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+  fallback_to_tfidf: true
+  batch_size: 8
+  min_batch_size: 1
+  max_seq_length: 256
+  device: auto
+  precision: fp16
+  oom_retry: true
+  normalize: true
+  cache: true
+
+candidate_generation:
+  max_previous_messages: 50
+  max_time_delta_minutes: 1440
+  same_channel_only: true
+  include_explicit_replies: true
+  include_temporal_candidates: true
+  include_semantic_candidates: true
+  semantic_top_k: 20
+  min_semantic_similarity: 0.25
+  max_candidates_per_message: 80
+
+link_scoring:
+  mode: hybrid
+  threshold: 0.50
+  explicit_reply_score: 1.0
+  uncertain_margin: 0.08
+  weights:
+    semantic_similarity: 0.30
+    temporal_score: 0.20
+    mention_score: 0.15
+    lexical_overlap: 0.10
+    question_answer_score: 0.10
+    same_native_thread_score: 0.10
+    participant_continuity_score: 0.05
+
+evaluation:
+  enabled: true
+  use_thread_id_as_silver_reference: true
+  use_explicit_replies_as_reference: true
+  compute_link_metrics: true
+  compute_cluster_metrics: true
+  compute_stability_metrics: true
+  thresholds: [0.40, 0.45, 0.50, 0.55, 0.60, 0.65]
+
+interface:
+  mode: static_html
+  generate_thread_pages: true
+  generate_overview: true
+  show_evidence: true
+  show_alternative_parents: true
+  show_ambiguity: true
+  show_timeline: true
+  preserve_offline_compatibility: true
+
+neo4j_export:
+  enabled: true
+  message_label: Message
+  conversation_label: PredictedConversation
+  predicted_reply_relationship: PREDICTED_REPLIES_TO
+  belongs_to_predicted_relationship: BELONGS_TO_PREDICTED_CONVERSATION
+  generate_aura_notes: true
+
+random_seed: 42
