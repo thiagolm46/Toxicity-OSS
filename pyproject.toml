@@ -1,26 +1,29 @@
 [project]
-name = "discord-unveiled-software-filter"
+name = "toxicity-oss-discord-research"
 version = "0.1.0"
-description = "Pipeline para filtrar servidores de software no Discord-Unveiled e exportar dados para Parquet/DuckDB"
+description = "Filtragem por domínio e experimentos de disentanglement em comunidades Discord"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "duckdb>=1.5.1",
     "httpx>=0.28.1",
-    "networkx>=3.5",
+    "numpy>=2.0",
     "pandas>=3.0.2",
     "pyarrow>=23.0.1",
     "pytest>=8.4.2",
     "rich>=14.3.3",
-    "sentence-transformers>=5.6.0",
-    "torch==2.5.1+cu121",
     "typer>=0.24.1",
     "zstandard>=0.25.0",
 ]
 
-[[tool.uv.index]]
-url = "https://download.pytorch.org/whl/cu121"
-
 [project.scripts]
-discord-unveiled = "main:run"
-discord-disentangle = "discord_disentanglement.cli:main"
+discord-data = "discord_data.cli:main"
+discord-filter = "discord_filtering.cli:main"
+discord-disentangle = "discord_disentanglement.experiments.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["discord_data", "discord_filtering", "discord_disentanglement"]

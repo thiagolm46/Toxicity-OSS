@@ -1,0 +1,386 @@
+{
+  "schema_version": 1,
+  "profile_id": "games",
+  "profile_version": "1.0.0",
+  "domain": "games",
+  "description": "Perfil interpretável para selecionar comunidades e canais centrados em jogos digitais.",
+  "server": {
+    "fields": [
+      "name",
+      "description",
+      "about",
+      "reasons_to_join",
+      "slug",
+      "vanity_url_code",
+      "keywords"
+    ],
+    "overlap_policy": "max_per_group",
+    "positive_rules": [
+      {
+        "id": "video-games",
+        "label": "video games",
+        "pattern": "\\bvideo[ -]+games?\\b",
+        "weight": 5,
+        "group": "gaming-core"
+      },
+      {
+        "id": "gaming",
+        "label": "gaming",
+        "pattern": "\\bgaming\\b",
+        "weight": 5,
+        "group": "gaming-core"
+      },
+      {
+        "id": "game",
+        "label": "game",
+        "pattern": "\\bgames?\\b",
+        "weight": 3,
+        "group": "gaming-core"
+      },
+      {
+        "id": "esports",
+        "label": "esports",
+        "pattern": "\\be[ -]?sports?\\b",
+        "weight": 4,
+        "group": "competitive-gaming"
+      },
+      {
+        "id": "multiplayer",
+        "label": "multiplayer",
+        "pattern": "\\b(?:multiplayer|co[ -]?op|pvp|pve)\\b",
+        "weight": 3,
+        "group": "multiplayer"
+      },
+      {
+        "id": "guild-clan",
+        "label": "guild/clan",
+        "pattern": "\\b(?:guild|clan|squad|gaming community)\\b",
+        "weight": 2,
+        "group": "player-group"
+      },
+      {
+        "id": "pc-console",
+        "label": "gaming platform",
+        "pattern": "\\b(?:pc gaming|playstation|xbox|nintendo|steam|epic games)\\b",
+        "weight": 3,
+        "group": "gaming-platform"
+      },
+      {
+        "id": "popular-game-title",
+        "label": "game title",
+        "pattern": "\\b(?:minecraft|valorant|roblox|fortnite|league of legends|counter[ -]?strike|dota ?2|overwatch|apex legends|rocket league|world of warcraft|final fantasy|genshin impact|call of duty)\\b",
+        "weight": 5,
+        "group": "game-title"
+      },
+      {
+        "id": "gameplay",
+        "label": "gameplay",
+        "pattern": "\\b(?:gameplay|matchmaking|leaderboard|ranked|casual match)\\b",
+        "weight": 3,
+        "group": "gameplay"
+      },
+      {
+        "id": "streaming",
+        "label": "game streaming",
+        "pattern": "\\b(?:twitch|game stream|streaming games)\\b",
+        "weight": 2,
+        "group": "game-media"
+      }
+    ],
+    "negative_rules": [
+      {
+        "id": "nsfw",
+        "label": "nsfw",
+        "pattern": "\\bnsfw\\b|(?<![0-9])18\\+(?![0-9])",
+        "weight": 6,
+        "group": "adult"
+      },
+      {
+        "id": "finance-crypto",
+        "label": "finance/crypto",
+        "pattern": "\\b(?:crypto|nft|forex|trading)\\b",
+        "weight": 5,
+        "group": "finance"
+      },
+      {
+        "id": "software-development",
+        "label": "software development",
+        "pattern": "\\b(?:software engineering|software development|programming|coding|developer tools?)\\b",
+        "weight": 4,
+        "group": "software"
+      },
+      {
+        "id": "giveaway-only",
+        "label": "giveaway",
+        "pattern": "\\b(?:giveaways?|free nitro|airdrops?)\\b",
+        "weight": 3,
+        "group": "promotion"
+      },
+      {
+        "id": "dating",
+        "label": "dating",
+        "pattern": "\\b(?:dating|matchmaking singles)\\b",
+        "weight": 4,
+        "group": "dating"
+      }
+    ],
+    "selection": {
+      "min_positive_score": 6,
+      "min_score_margin": 2,
+      "max_negative_score": 4,
+      "blocked_negative_labels": [
+        "nsfw",
+        "finance/crypto"
+      ]
+    }
+  },
+  "channel": {
+    "metadata_fields": [
+      "channel_name",
+      "channel_category",
+      "channel_description",
+      "topic"
+    ],
+    "overlap_policy": "max_per_group",
+    "positive_rules": [
+      {
+        "id": "gameplay",
+        "label": "gameplay",
+        "pattern": "\\b(?:gameplay|game[ -]?chat|in[ -]?game|matches?)\\b",
+        "weight": 4,
+        "group": "gameplay"
+      },
+      {
+        "id": "lfg",
+        "label": "looking for group",
+        "pattern": "(?<![A-Za-z0-9_])lfg(?![A-Za-z0-9_])|\\b(?:looking for group|find[ -]?a[ -]?team|squad[ -]?up)\\b",
+        "weight": 4,
+        "group": "matchmaking"
+      },
+      {
+        "id": "strategy",
+        "label": "strategy/guides",
+        "pattern": "\\b(?:strategy|strategies|guides?|tips|builds?|loadouts?|walkthroughs?)\\b",
+        "weight": 4,
+        "group": "game-knowledge"
+      },
+      {
+        "id": "competitive",
+        "label": "competitive/ranked",
+        "pattern": "\\b(?:competitive|ranked|tournament|scrims?|leaderboard|esports?)\\b",
+        "weight": 4,
+        "group": "competition"
+      },
+      {
+        "id": "game-help",
+        "label": "game help",
+        "pattern": "\\b(?:game[ -]?help|player[ -]?support|questions?|troubleshooting)\\b",
+        "weight": 3,
+        "group": "support"
+      },
+      {
+        "id": "clips-screenshots",
+        "label": "clips/screenshots",
+        "pattern": "\\b(?:clips?|screenshots?|highlights?|replays?)\\b",
+        "weight": 2,
+        "group": "game-media"
+      },
+      {
+        "id": "patch-updates",
+        "label": "patch/update",
+        "pattern": "\\b(?:patch(?:es)?|updates?|balance|season|events?)\\b",
+        "weight": 3,
+        "group": "game-update"
+      },
+      {
+        "id": "game-title",
+        "label": "game title",
+        "pattern": "\\b(?:minecraft|valorant|roblox|fortnite|league of legends|counter[ -]?strike|dota ?2|overwatch|apex legends|rocket league|world of warcraft|final fantasy|genshin impact|call of duty)\\b",
+        "weight": 4,
+        "group": "game-title"
+      }
+    ],
+    "negative_rules": [
+      {
+        "id": "off-topic",
+        "label": "off-topic",
+        "pattern": "\\b(?:off[ -]?topic|random|unrelated|irl)\\b",
+        "weight": 4,
+        "group": "social"
+      },
+      {
+        "id": "memes",
+        "label": "memes",
+        "pattern": "\\b(?:memes?|shitpost)\\b",
+        "weight": 3,
+        "group": "memes"
+      },
+      {
+        "id": "introductions",
+        "label": "introductions",
+        "pattern": "\\b(?:introductions?|welcome)\\b",
+        "weight": 3,
+        "group": "onboarding"
+      },
+      {
+        "id": "administrative",
+        "label": "administrative",
+        "pattern": "\\b(?:rules?|roles?|moderation|admin|verification)\\b",
+        "weight": 5,
+        "group": "administrative"
+      },
+      {
+        "id": "bot-log",
+        "label": "bot/log",
+        "pattern": "\\b(?:bots?|logs?|audit)\\b",
+        "weight": 5,
+        "group": "automation"
+      },
+      {
+        "id": "voice",
+        "label": "voice",
+        "pattern": "\\bvoice\\b|(?<![A-Za-z0-9_])vc(?![A-Za-z0-9_])",
+        "weight": 4,
+        "group": "voice"
+      },
+      {
+        "id": "spam-giveaway",
+        "label": "spam/giveaway",
+        "pattern": "\\b(?:spam|giveaways?|free nitro)\\b",
+        "weight": 4,
+        "group": "spam"
+      },
+      {
+        "id": "marketplace",
+        "label": "marketplace",
+        "pattern": "\\b(?:marketplace|buy|sell|trading)\\b",
+        "weight": 3,
+        "group": "marketplace"
+      }
+    ],
+    "metadata_normalization": 8,
+    "signals": [
+      {
+        "id": "gameplay_term",
+        "label": "gameplay term",
+        "pattern": "\\b(?:gameplay|match|round|level|quest|mission|raid|boss|map|server|player|team|squad|win|loss|spawn|checkpoint)\\b",
+        "count_field": "gameplay_term_messages",
+        "lexical_weight": 0.25,
+        "lexical_saturation_ratio": 0.15,
+        "domain_weight": 0.2,
+        "domain_saturation_ratio": 0.15
+      },
+      {
+        "id": "game_title",
+        "label": "game title",
+        "pattern": "\\b(?:minecraft|valorant|roblox|fortnite|league of legends|counter[ -]?strike|dota ?2|overwatch|apex legends|rocket league|world of warcraft|final fantasy|genshin impact|call of duty)\\b",
+        "count_field": "game_title_messages",
+        "lexical_weight": 0.15,
+        "lexical_saturation_ratio": 0.08,
+        "domain_weight": 0.25,
+        "domain_saturation_ratio": 0.08
+      },
+      {
+        "id": "lfg_team",
+        "label": "LFG/team formation",
+        "pattern": "(?<![A-Za-z0-9_])lfg(?![A-Za-z0-9_])|\\b(?:looking for group|need a team|join my squad|party up|duo|trio)\\b",
+        "count_field": "lfg_team_messages",
+        "lexical_weight": 0.15,
+        "lexical_saturation_ratio": 0.08,
+        "domain_weight": 0.15,
+        "domain_saturation_ratio": 0.08
+      },
+      {
+        "id": "competitive",
+        "label": "competitive/ranked",
+        "pattern": "\\b(?:ranked|rank|elo|mmr|competitive|tournament|scrim|leaderboard|qualifier|bracket)\\b",
+        "count_field": "competitive_messages",
+        "lexical_weight": 0.15,
+        "lexical_saturation_ratio": 0.08,
+        "domain_weight": 0.15,
+        "domain_saturation_ratio": 0.08
+      },
+      {
+        "id": "strategy",
+        "label": "strategy/build",
+        "pattern": "\\b(?:strategy|build|loadout|meta|counter|rotation|combo|guide|tips|walkthrough)\\b",
+        "count_field": "strategy_messages",
+        "lexical_weight": 0.1,
+        "lexical_saturation_ratio": 0.08,
+        "domain_weight": 0.1,
+        "domain_saturation_ratio": 0.08
+      },
+      {
+        "id": "gaming_platform",
+        "label": "gaming platform",
+        "pattern": "\\b(?:steam|playstation|ps[345]|xbox|nintendo|switch|epic games|game pass)\\b",
+        "count_field": "gaming_platform_messages",
+        "lexical_weight": 0.05,
+        "lexical_saturation_ratio": 0.05,
+        "domain_weight": 0.05,
+        "domain_saturation_ratio": 0.05
+      },
+      {
+        "id": "play_session",
+        "label": "play session coordination",
+        "pattern": "\\b(?:play tonight|online now|queue up|invite me|add me|gamertag|friend code|custom lobby|private match)\\b",
+        "count_field": "play_session_messages",
+        "lexical_weight": 0.1,
+        "lexical_saturation_ratio": 0.06,
+        "domain_weight": 0.05,
+        "domain_saturation_ratio": 0.06
+      },
+      {
+        "id": "game_event",
+        "label": "game event/update",
+        "pattern": "\\b(?:patch notes?|new season|game update|balance changes?|limited event|battle pass|new character|new map)\\b",
+        "count_field": "game_event_messages",
+        "lexical_weight": 0.05,
+        "lexical_saturation_ratio": 0.05,
+        "domain_weight": 0.05,
+        "domain_saturation_ratio": 0.05
+      }
+    ],
+    "component_weights": {
+      "metadata": 0.2,
+      "lexical": 0.65,
+      "domain": 0.15
+    },
+    "classification": {
+      "high_confidence_score": 0.7,
+      "review_score": 0.5,
+      "high_min_lexical_score": 0.3,
+      "fallback_min_lexical_score": 0.45,
+      "fallback_min_domain_score": 0.2,
+      "admin_max_lexical_score": 0.3,
+      "admin_max_domain_score": 0.2,
+      "social_max_lexical_score": 0.35,
+      "admin_negative_labels": [
+        "administrative",
+        "bot/log",
+        "voice",
+        "spam/giveaway"
+      ],
+      "social_negative_labels": [
+        "off-topic",
+        "memes",
+        "introductions",
+        "marketplace"
+      ],
+      "class_high": "A",
+      "class_review": "B",
+      "class_social": "C",
+      "class_admin": "D",
+      "include_classes": [
+        "A"
+      ],
+      "manual_review_classes": [
+        "B"
+      ]
+    },
+    "exclude_bot_messages": true,
+    "max_evidence_examples": 5,
+    "score_field": "game_channel_score",
+    "domain_score_field": "game_evidence_score"
+  }
+}

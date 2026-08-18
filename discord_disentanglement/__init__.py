@@ -1,6 +1,13 @@
-from __future__ import annotations
+"""Experimentos comparáveis de conversation disentanglement."""
 
-from .pipeline import DisentanglementConfig, run_pipeline
+from .approaches import APPROACH_IDS, create_approach
+from .experiments import ExperimentConfig, run_all, run_experiment
 
-__all__ = ["DisentanglementConfig", "run_pipeline"]
+__all__ = [
+    "APPROACH_IDS",
+    "ExperimentConfig",
+    "create_approach",
+    "run_all",
+    "run_experiment",
+]
 
