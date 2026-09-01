@@ -24,6 +24,15 @@ class ExperimentConfig:
     random_seed: int = 42
     review_sample_size: int = 100
     validation_abstention_quantile: float = 0.25
+    candidate_recall_ks: tuple[int, ...] = (5, 10, 20)
+    parent_distance_boundaries: tuple[int, ...] = (2, 5, 10, 20)
+    time_gap_boundaries_seconds: tuple[float, ...] = (30.0, 120.0, 300.0, 900.0)
+    competition_low_max: int = 5
+    competition_high_min: int = 15
+    bootstrap_resamples: int = 1000
+    bootstrap_confidence: float = 0.95
+    bootstrap_unit: str = "channel"
+    approach_settings: dict[str, dict[str, Any]] | None = None
     overwrite: bool = False
 
     def __post_init__(self) -> None:
@@ -55,6 +64,34 @@ class ExperimentConfig:
             raise ValueError("review_sample_size nao pode ser negativo")
         if not 0.0 <= self.validation_abstention_quantile < 1.0:
             raise ValueError("validation_abstention_quantile deve estar em [0, 1)")
+        object.__setattr__(self, "candidate_recall_ks", tuple(self.candidate_recall_ks))
+        object.__setattr__(
+            self, "parent_distance_boundaries", tuple(self.parent_distance_boundaries)
+        )
+        object.__setattr__(
+            self, "time_gap_boundaries_seconds", tuple(self.time_gap_boundaries_seconds)
+        )
+        if not self.candidate_recall_ks or any(k < 1 for k in self.candidate_recall_ks):
+            raise ValueError("candidate_recall_ks requer inteiros positivos")
+        if tuple(sorted(set(self.candidate_recall_ks))) != self.candidate_recall_ks:
+            raise ValueError("candidate_recall_ks deve ser crescente e sem duplicatas")
+        for name, boundaries in (
+            ("parent_distance_boundaries", self.parent_distance_boundaries),
+            ("time_gap_boundaries_seconds", self.time_gap_boundaries_seconds),
+        ):
+            if not boundaries or any(value <= 0 for value in boundaries):
+                raise ValueError(f"{name} requer limites positivos")
+            if tuple(sorted(set(boundaries))) != boundaries:
+                raise ValueError(f"{name} deve ser crescente e sem duplicatas")
+        if self.competition_low_max >= self.competition_high_min:
+            raise ValueError("competition_low_max deve ser menor que competition_high_min")
+        if self.bootstrap_resamples < 0:
+            raise ValueError("bootstrap_resamples nao pode ser negativo")
+        if not 0.0 < self.bootstrap_confidence < 1.0:
+            raise ValueError("bootstrap_confidence deve estar em (0, 1)")
+        if self.bootstrap_unit not in {"message", "channel"}:
+            raise ValueError("bootstrap_unit deve ser message ou channel")
+        object.__setattr__(self, "approach_settings", self.approach_settings or {})
 
     def as_dict(self) -> dict[str, Any]:
         serialized = asdict(self)

@@ -20,12 +20,15 @@ from .artifacts import (
     build_message_assignments,
     build_predicted_threads,
     build_review_sample,
+    annotate_ranking_for_evaluation,
     rank_and_select_links,
     write_run_artifacts,
 )
 from .config import ExperimentConfig
 from .data import PreparedExperiment, prepare_experiment
 from .metrics import compute_test_metrics
+from discord_disentanglement.evaluation.leakage import audit_prediction_inputs
+from discord_disentanglement.evaluation.statistics import paired_bootstrap_difference
 
 
 @dataclass(slots=True)
@@ -42,6 +45,7 @@ class AllExperimentsResult:
     runs: dict[str, ExperimentRunResult]
     comparison_csv: Path
     comparison_markdown: Path
+    paired_bootstrap_json: Path
 
 
 def run_experiment(
@@ -50,8 +54,13 @@ def run_experiment(
 ) -> ExperimentRunResult:
     """Prepare the shared protocol and execute one isolated approach module."""
 
-    instance = create_approach(approach) if isinstance(approach, str) else approach
+    instance = (
+        create_approach(approach, config.approach_settings.get(approach, {}))
+        if isinstance(approach, str)
+        else approach
+    )
     _preflight_outputs(config, (instance.approach_id,), include_comparison=False)
+    instance.preflight()
     prepared = prepare_experiment(config)
     return _run_prepared(config, prepared, instance)
 
@@ -66,17 +75,24 @@ def run_all(
     if len(set(approach_ids)) != len(approach_ids):
         raise ValueError("A lista de abordagens contem duplicatas")
     _preflight_outputs(config, approach_ids, include_comparison=True)
+    instances = [
+        create_approach(approach_id, config.approach_settings.get(approach_id, {}))
+        for approach_id in approach_ids
+    ]
+    for instance in instances:
+        instance.preflight()
     prepared = prepare_experiment(config)
     runs: dict[str, ExperimentRunResult] = {}
-    for approach_id in approach_ids:
-        instance = create_approach(approach_id)
+    for instance in instances:
         result = _run_prepared(config, prepared, instance)
-        runs[approach_id] = result
+        runs[instance.approach_id] = result
     comparison_csv, comparison_markdown = write_comparison(config.output_dir, runs)
+    paired_bootstrap_json = write_paired_bootstrap(config, runs)
     return AllExperimentsResult(
         runs=runs,
         comparison_csv=comparison_csv,
         comparison_markdown=comparison_markdown,
+        paired_bootstrap_json=paired_bootstrap_json,
     )
 
 
@@ -99,13 +115,25 @@ def _run_prepared(
         train_gold = pd.DataFrame(
             columns=["source_message_id", "target_message_id"]
         )
+    fit_data = ApproachFitData(
+        train_candidates=train_candidates,
+        validation_candidates=validation_candidates,
+        train_gold=train_gold,
+        random_seed=config.random_seed,
+    )
+    leakage_audit = audit_prediction_inputs(
+        candidates=prepared.candidates,
+        train_gold=(
+            prepared.direct_reply_gold[
+                prepared.direct_reply_gold["source_split"] == "train"
+            ]
+            if approach.uses_direct_reply_training
+            else train_gold
+        ),
+        uses_direct_reply_training=approach.uses_direct_reply_training,
+    )
     approach.fit(
-        ApproachFitData(
-            train_candidates=train_candidates,
-            validation_candidates=validation_candidates,
-            train_gold=train_gold,
-            random_seed=config.random_seed,
-        )
+        fit_data
     )
     threshold = _calibrate_label_free_threshold(
         approach,
@@ -119,20 +147,22 @@ def _run_prepared(
         approach_id=approach.approach_id,
         threshold=threshold,
     )
+    ranked = annotate_ranking_for_evaluation(ranked, prepared.direct_reply_gold)
     assignments = build_message_assignments(
         prepared.messages,
         predicted_links,
         approach_id=approach.approach_id,
     )
     predicted_threads = build_predicted_threads(assignments)
-    metrics = compute_test_metrics(
+    metrics, gold_outcomes, silver_projection = compute_test_metrics(
         approach_id=approach.approach_id,
         ranked_candidates=ranked,
         predicted_links=predicted_links,
         message_assignments=assignments,
         direct_reply_gold=prepared.direct_reply_gold,
+        messages=prepared.messages,
         selection_threshold=threshold,
-        abstention_quantile=config.validation_abstention_quantile,
+        config=config,
     )
     review_sample = build_review_sample(
         ranked_candidates=ranked,
@@ -153,6 +183,9 @@ def _run_prepared(
         predicted_threads=predicted_threads,
         metrics=metrics,
         review_sample=review_sample,
+        gold_outcomes=gold_outcomes,
+        silver_projection=silver_projection,
+        leakage_audit=leakage_audit,
         scoring_diagnostics=scored.diagnostics,
     )
     return ExperimentRunResult(
@@ -207,7 +240,11 @@ def _preflight_outputs(
     ]
     if include_comparison:
         targets.extend(
-            [config.output_dir / "comparison.csv", config.output_dir / "comparison.md"]
+            [
+                config.output_dir / "comparison.csv",
+                config.output_dir / "comparison.md",
+                config.output_dir / "paired_bootstrap.json",
+            ]
         )
     existing = [path for path in targets if path.exists()]
     if existing:
@@ -226,28 +263,37 @@ def write_comparison(
     rows: list[dict[str, Any]] = []
     for approach_id, result in runs.items():
         metrics = result.metrics
+        manifest = json.loads(
+            result.artifacts["manifest.json"].read_text(encoding="utf-8")
+        )
         rows.append(
             {
                 "approach_id": approach_id,
-                "fidelity": "pilot_proxy",
+                "implementation_type": manifest["approach"]["implementation_type"],
+                "fidelity": manifest["approach"]["fidelity"],
                 "candidate_fingerprint": result.candidate_fingerprint,
                 "evaluation_split": metrics["evaluation_split"],
-                "selection_threshold": metrics["selection_threshold"],
-                "test_message_count": metrics["test_message_count"],
-                "test_candidate_pair_count": metrics["test_candidate_pair_count"],
-                "test_explicit_reply_count": metrics["test_explicit_reply_count"],
-                "test_explicit_reply_candidate_coverage": metrics[
-                    "test_explicit_reply_candidate_coverage"
+                "candidate_recall": metrics["candidate_generation"]["candidate_recall"],
+                "recall_at_1_overall": metrics["ranking"]["overall"]["recall_at_1"],
+                "recall_at_5_overall": metrics["ranking"]["overall"]["recall_at_5"],
+                "mrr_overall": metrics["ranking"]["overall"]["mrr"],
+                "mrr_conditional": metrics["ranking"]["conditional"]["mrr"],
+                "ari": metrics["conversation_reconstruction"]["ari"],
+                "nmi": metrics["conversation_reconstruction"]["nmi"],
+                "bcubed_f1": metrics["conversation_reconstruction"]["bcubed_f1"],
+                "variation_of_information": metrics["conversation_reconstruction"][
+                    "variation_of_information"
                 ],
-                "test_recall_at_1": metrics["test_recall_at_1"],
-                "test_recall_at_3": metrics["test_recall_at_3"],
-                "test_recall_at_5": metrics["test_recall_at_5"],
-                "test_mrr": metrics["test_mrr"],
-                "test_selected_parent_accuracy_on_explicit_sources": metrics[
-                    "test_selected_parent_accuracy_on_explicit_sources"
+                "exact_match": metrics["conversation_reconstruction"]["exact_match"],
+                "fragmentation_rate": metrics["conversation_reconstruction"][
+                    "fragmentation_rate"
                 ],
-                "test_predicted_link_count": metrics["test_predicted_link_count"],
-                "test_predicted_thread_count": metrics["test_predicted_thread_count"],
+                "merge_rate": metrics["conversation_reconstruction"]["merge_rate"],
+                "selection_threshold": metrics["link_selection"]["selection_threshold"],
+                "test_predicted_link_count": metrics["link_selection"]["predicted_link_count"],
+                "test_predicted_thread_count": metrics["predicted_partition"][
+                    "test_predicted_thread_count"
+                ],
             }
         )
     comparison = pd.DataFrame.from_records(rows)
@@ -258,23 +304,92 @@ def write_comparison(
     return csv_path, markdown_path
 
 
+def write_paired_bootstrap(
+    config: ExperimentConfig,
+    runs: dict[str, ExperimentRunResult],
+) -> Path:
+    """Compare approaches on identical held-out reply examples."""
+    approach_ids = list(runs)
+    outcomes = {
+        approach_id: pd.read_parquet(result.artifacts["test_gold_outcomes.parquet"])
+        for approach_id, result in runs.items()
+    }
+    comparisons: list[dict[str, Any]] = []
+    seed = config.random_seed + 100
+    for left_position, left_id in enumerate(approach_ids):
+        for right_id in approach_ids[left_position + 1 :]:
+            paired = outcomes[left_id][
+                ["source_message_id", "channel_key", "hit_at_1", "reciprocal_rank"]
+            ].merge(
+                outcomes[right_id][
+                    ["source_message_id", "hit_at_1", "reciprocal_rank"]
+                ],
+                on="source_message_id",
+                how="inner",
+                suffixes=("_left", "_right"),
+                validate="one_to_one",
+            )
+            intervals = {}
+            for metric in ("hit_at_1", "reciprocal_rank"):
+                intervals[metric] = paired_bootstrap_difference(
+                    paired,
+                    left_column=f"{metric}_left",
+                    right_column=f"{metric}_right",
+                    unit_column=(
+                        "channel_key" if config.bootstrap_unit == "channel" else None
+                    ),
+                    resamples=config.bootstrap_resamples,
+                    confidence=config.bootstrap_confidence,
+                    seed=seed,
+                )
+                seed += 1
+            comparisons.append(
+                {
+                    "left_approach": left_id,
+                    "right_approach": right_id,
+                    "paired_on": "source_message_id",
+                    "intervals": intervals,
+                }
+            )
+    payload = {
+        "schema_version": "1.0",
+        "evaluation_split": "test",
+        "reference": "partial_silver_explicit_discord_replies",
+        "unit_of_analysis": config.bootstrap_unit,
+        "resamples": config.bootstrap_resamples,
+        "confidence": config.bootstrap_confidence,
+        "comparisons": comparisons,
+        "interpretation": (
+            "Intervals estimate paired differences only; they are not automatic "
+            "hypothesis tests and do not establish universal method superiority."
+        ),
+    }
+    path = config.output_dir / "paired_bootstrap.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return path
+
+
 def _comparison_markdown(comparison: pd.DataFrame) -> str:
     heading = (
         "# Comparacao do piloto de disentanglement — Neo4j\n\n"
         "Todas as linhas usam o mesmo universo de candidatos e somente o split temporal "
-        "held-out de teste (20%) nas metricas. `fidelity=pilot_proxy`: os modulos nao "
-        "alegam reproducao fiel dos artigos. Replies explicitos sao referencia positiva "
-        "silver, nao ground truth conversacional completo.\n\n"
+        "held-out de teste (20%) nas metricas. Os tipos `PILOT_PROXY` e `INSPIRED_BY` "
+        "nao alegam reproducao fiel dos artigos. Replies explicitos sao referencia "
+        "positiva silver, nao ground truth conversacional completo.\n\n"
     )
     if comparison.empty:
         return heading + "Nenhuma abordagem executada.\n"
     display_columns = [
         "approach_id",
-        "test_recall_at_1",
-        "test_recall_at_3",
-        "test_mrr",
-        "test_predicted_link_count",
-        "test_predicted_thread_count",
+        "implementation_type",
+        "candidate_recall",
+        "recall_at_1_overall",
+        "mrr_overall",
+        "mrr_conditional",
+        "ari",
+        "bcubed_f1",
+        "fragmentation_rate",
+        "merge_rate",
     ]
     header = "| " + " | ".join(display_columns) + " |\n"
     divider = "| " + " | ".join(["---"] * len(display_columns)) + " |\n"

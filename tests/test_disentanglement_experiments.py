@@ -9,8 +9,11 @@ import pytest
 
 from discord_disentanglement.approaches import APPROACH_IDS, ApproachFitData, create_approach
 from discord_disentanglement.approaches.base import FORBIDDEN_PREDICTION_COLUMNS
+from discord_disentanglement.experiments.__main__ import build_parser
 from discord_disentanglement.experiments import ExperimentConfig, run_all, run_experiment
 from discord_disentanglement.experiments.data import PreparedExperiment, prepare_experiment
+from discord_disentanglement.gold_standard import export_native_reply_gold_standard
+from discord_disentanglement.ui.data import ExperimentRepository
 
 
 GUILD_ID = "787399249741479977"
@@ -85,7 +88,172 @@ def _config(input_path: Path, output_dir: Path) -> ExperimentConfig:
         max_candidates_per_message=8,
         max_time_delta_hours=2.0,
         review_sample_size=6,
+        bootstrap_resamples=25,
     )
+
+
+def test_preparation_preserves_message_content_without_redaction(tmp_path: Path) -> None:
+    input_path = tmp_path / "messages.parquet"
+    original_content = "See <@user-42> at https://example.com/path\n```MATCH (n) RETURN n```"
+    rows = [
+        {
+            "guild_id": GUILD_ID,
+            "guild_name": "Neo4j",
+            "message_id": f"m{index:03d}",
+            "channel_id": "channel-0",
+            "channel_name": "help",
+            "author_id": f"user-{index}",
+            "timestamp": pd.Timestamp("2026-01-01T00:00:00Z")
+            + pd.Timedelta(minutes=index),
+            "content": original_content if index == 0 else f"message {index}",
+        }
+        for index in range(5)
+    ]
+    pd.DataFrame.from_records(rows).to_parquet(input_path, index=False)
+
+    prepared = prepare_experiment(_config(input_path, tmp_path / "out"))
+
+    assert prepared.messages.loc[0, "content_normalized"] == original_content
+
+
+def test_native_reply_gold_standard_keeps_reply_fan_out_in_one_conversation(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "messages.parquet"
+    timestamp = pd.Timestamp("2026-01-01T00:00:00Z")
+    rows = [
+        {
+            "guild_id": GUILD_ID,
+            "guild_name": "Neo4j",
+            "message_id": "m1",
+            "channel_id": "help",
+            "channel_name": "help",
+            "author_id": "user-1",
+            "timestamp": timestamp,
+            "content": "How do I write this query?",
+        },
+        {
+            "guild_id": GUILD_ID,
+            "guild_name": "Neo4j",
+            "message_id": "m2",
+            "channel_id": "help",
+            "channel_name": "help",
+            "author_id": "user-2",
+            "timestamp": timestamp + pd.Timedelta(minutes=1),
+            "content": "Use MATCH.",
+            "reply_to_message_id": "m1",
+        },
+        {
+            "guild_id": GUILD_ID,
+            "guild_name": "Neo4j",
+            "message_id": "m3",
+            "channel_id": "help",
+            "channel_name": "help",
+            "author_id": "user-3",
+            "timestamp": timestamp + pd.Timedelta(minutes=2),
+            "content": "Try this variant.",
+            "reply_to_message_id": "m1",
+        },
+        {
+            "guild_id": GUILD_ID,
+            "guild_name": "Neo4j",
+            "message_id": "m4",
+            "channel_id": "help",
+            "channel_name": "help",
+            "author_id": "user-1",
+            "timestamp": timestamp + pd.Timedelta(minutes=3),
+            "content": "That worked.",
+            "reply_to_message_id": "m2",
+        },
+        {
+            "guild_id": GUILD_ID,
+            "guild_name": "Neo4j",
+            "message_id": "standalone",
+            "channel_id": "help",
+            "channel_name": "help",
+            "author_id": "user-4",
+            "timestamp": timestamp + pd.Timedelta(minutes=4),
+            "content": "Unrelated message.",
+        },
+        {
+            "guild_id": GUILD_ID,
+            "guild_name": "Neo4j",
+            "message_id": "cross-channel",
+            "channel_id": "general",
+            "channel_name": "general",
+            "author_id": "user-5",
+            "timestamp": timestamp + pd.Timedelta(minutes=5),
+            "content": "Invalid channel reference.",
+            "reply_to_message_id": "m1",
+        },
+        {
+            "guild_id": GUILD_ID,
+            "guild_name": "Neo4j",
+            "message_id": "non-past",
+            "channel_id": "help",
+            "channel_name": "help",
+            "author_id": "user-6",
+            "timestamp": timestamp - pd.Timedelta(minutes=1),
+            "content": "Invalid future reference.",
+            "reply_to_message_id": "m1",
+        },
+        {
+            "guild_id": "other-guild",
+            "guild_name": "Other",
+            "message_id": "outside",
+            "channel_id": "help",
+            "channel_name": "help",
+            "author_id": "outsider",
+            "timestamp": timestamp + pd.Timedelta(minutes=6),
+            "content": "Outside the selected guild.",
+            "reply_to_message_id": "m1",
+        },
+    ]
+    pd.DataFrame.from_records(rows).to_parquet(input_path, index=False)
+
+    artifacts = export_native_reply_gold_standard(
+        input_path,
+        tmp_path / "gold",
+        guild_id=GUILD_ID,
+    )
+
+    messages = pd.read_parquet(artifacts.filtered_messages_path)
+    edges = pd.read_parquet(artifacts.direct_reply_edges_path)
+    conversations = pd.read_parquet(artifacts.conversations_path)
+    annotation_queue = pd.read_csv(artifacts.annotation_queue_path, keep_default_na=False)
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert len(messages) == 7
+    assert edges[["source_message_id", "target_message_id"]].values.tolist() == [
+        ["m2", "m1"],
+        ["m3", "m1"],
+        ["m4", "m2"],
+    ]
+    assert conversations["root_message_id"].tolist() == ["m1"]
+    assert conversations["message_count"].tolist() == [4]
+    payload = json.loads(conversations.loc[0, "messages_json"])
+    assert [message["message_id"] for message in payload] == ["m1", "m2", "m3", "m4"]
+    assert [message["reply_to_message_id"] for message in payload] == [None, "m1", "m1", "m2"]
+    assert annotation_queue["conversation_id"].tolist() == conversations["conversation_id"].tolist()
+    assert annotation_queue["reply_edges_valid"].tolist() == ["pending"]
+    assert annotation_queue["conversation_complete"].tolist() == ["pending"]
+    assert annotation_queue["ambiguity"].tolist() == ["pending"]
+    assert summary["direct_reply_cross_channel_excluded"] == 1
+    assert summary["direct_reply_non_past_excluded"] == 1
+
+
+def test_gold_standard_cli_defaults_to_neo4j_scope(tmp_path: Path) -> None:
+    args = build_parser().parse_args(
+        [
+            "gold-standard",
+            "--input",
+            str(tmp_path / "messages.parquet"),
+            "--output",
+            str(tmp_path / "gold"),
+        ]
+    )
+
+    assert args.guild_id == GUILD_ID
+    assert args.channel_id is None
 
 
 def test_common_candidates_are_same_channel_strictly_past_and_label_free(
@@ -135,7 +303,8 @@ def test_run_all_writes_isolated_contract_and_test_only_metrics(tmp_path: Path) 
     comparison = pd.read_csv(result.comparison_csv)
     assert comparison["candidate_fingerprint"].nunique() == 1
     assert set(comparison["evaluation_split"]) == {"test"}
-    assert set(comparison["fidelity"]) == {"pilot_proxy"}
+    assert set(comparison["implementation_type"]) == {"PILOT_PROXY", "INSPIRED_BY"}
+    assert result.paired_bootstrap_json.exists()
 
     ranking_score_signatures: list[tuple[float, ...]] = []
     for approach_id, run in result.runs.items():
@@ -147,6 +316,8 @@ def test_run_all_writes_isolated_contract_and_test_only_metrics(tmp_path: Path) 
             "metrics.json",
             "manifest.json",
             "review_sample.csv",
+            "test_gold_outcomes.parquet",
+            "silver_projection.parquet",
         }
         assert expected == {path.name for path in run.artifacts.values()}
         assert all(path.exists() for path in run.artifacts.values())
@@ -173,7 +344,10 @@ def test_run_all_writes_isolated_contract_and_test_only_metrics(tmp_path: Path) 
         assert metrics["test_message_count"] == 12
         assert metrics["test_cross_channel_predicted_link_count"] == 0
         assert metrics["test_non_past_predicted_link_count"] == 0
-        assert manifest["approach"]["fidelity"] == "pilot_proxy"
+        assert manifest["approach"]["implementation_type"] in {
+            "PILOT_PROXY",
+            "INSPIRED_BY",
+        }
         assert manifest["approach"]["effective_link_threshold"] == metrics["selection_threshold"]
         assert manifest["common_candidate_protocol"]["same_channel_only"] is True
         assert manifest["common_candidate_protocol"]["strictly_past_only"] is True
@@ -186,7 +360,18 @@ def test_run_all_writes_isolated_contract_and_test_only_metrics(tmp_path: Path) 
         )
 
     # Each module has its own method ID, scores/threshold and isolated output.
-    assert len(set(ranking_score_signatures)) == 3
+    assert len(set(ranking_score_signatures)) == len(APPROACH_IDS)
+
+    repository = ExperimentRepository(output_dir)
+    assert repository.approach_ids == APPROACH_IDS
+    ui_run = repository.load_run("chi_zero_shot")
+    ui_messages = repository.load_messages("chi_zero_shot")
+    assert ui_run.manifest["leakage_audit"]["status"] == "PASSED"
+    assert len(ui_messages) == 60
+    source_id = str(ui_run.gold_outcomes.iloc[0]["source_message_id"])
+    inspected = repository.link_inspector(ui_run, ui_messages, source_id, top_k=3)
+    assert list(inspected["rank"]) == sorted(inspected["rank"])
+    assert len(repository.method_disagreement(source_id)) == len(APPROACH_IDS)
     with pytest.raises(FileExistsError, match="overwrite=True"):
         run_all(_config(input_path, output_dir))
 

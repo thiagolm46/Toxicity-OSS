@@ -320,3 +320,238 @@ A limpeza não alterou nem removeu a fonte congelada
 `software_messages.parquet`, os metadados brutos, os perfis versionados, as
 decisões humanas ou os artefatos finais do piloto. A partir desta etapa, os três
 comandos públicos são `discord-data`, `discord-filter` e `discord-disentangle`.
+
+## 15. Evolução científica do disentanglement — schema 2.0
+
+Em 2026-08-18 o protocolo foi ampliado sem substituir o piloto v1. Foram
+adicionadas duas condições experimentais e uma avaliação que separa explicitamente
+três problemas:
+
+1. geração comum de candidatos;
+2. ranking/recuperação do parent;
+3. reconstrução de conversas por projeção sobre componentes silver.
+
+Os novos métodos são `chi_zero_shot` e `irc_transfer`, ambos corretamente
+classificados como `INSPIRED_BY`. A auditoria encontrou o repositório oficial de
+Chi e Rudnicky no commit `ad0ef53f`, mas não encontrou licença nem checkpoint
+treinado; portanto, nenhum código foi copiado. O adapter usa um checkpoint linear
+auto-supervisionado em logs Ubuntu IRC sem ler annotations.
+
+Para transferência, foi escolhido o corpus/repositório de Kummerfeld et al. no
+commit `82ed04f9`, cujos dados têm licença CC-BY-4.0 e código ISC. O modelo DyNet
+oficial não distribui checkpoint compatível com o ambiente atual. O adapter usa
+um ranker pairwise treinado somente no IRC. O parser preserva IDs baseados nas
+linhas do log, múltiplos parents e diferencia self-links, eventos de sistema e
+reply edges. Os checkpoints JSON registram todos esses números e hashes.
+
+A avaliação v2 acrescenta:
+
+- Candidate Recall por K = 5, 10, 20 e 50;
+- Recall@1/3/5/10, MRR, mean/median rank overall e conditional;
+- ARI e NMI via scikit-learn;
+- VI, B-Cubed, Exact Match, fragmentation e merge com testes controlados;
+- intervalos bootstrap percentil agrupados por canal, 1.000 reamostragens;
+- diferenças bootstrap pareadas sobre os mesmos 1.392 replies de teste;
+- estratos de distância, tempo e competição;
+- auditoria automática de leakage antes de qualquer `fit` ou `score`;
+- interface Streamlit read-only para conversas, silver, predictions, rankings,
+  divergências e casos de erro.
+
+Definições formais, decisões de projeção e limitações estão em
+`DISENTANGLEMENT_EVALUATION.md`; a proveniência de cada método está em
+`DISENTANGLEMENT_METHODS.md`.
+
+## 16. Execução integral Neo4j — piloto v2
+
+O novo piloto foi gravado separadamente em
+`data/processed/disentanglement_experiments/neo4j_pilot_v2`. A execução levou
+aproximadamente 6 minutos e 20 segundos no ambiente observado, incluindo os
+intervalos de confiança. O v1 permanece preservado.
+
+| Verificação | Resultado |
+|---|---:|
+| mensagens treino/validação/teste | 21.472 / 7.157 / 7.158 |
+| replies brutos / válidos / alvo ausente | 8.813 / 8.697 / 116 |
+| pares candidatos comuns | 405.728 |
+| fingerprint comum | `2c617474453bbf4f44fc6aecfe83b1ac596d42149f7494b84f26612c7c6ac892` |
+| replies silver de teste | 1.392 |
+| mensagens na projeção silver | 2.247 |
+| links entre canais / links para o futuro | 0 / 0 nas cinco abordagens |
+| leakage audit | `PASSED` nas cinco abordagens |
+| bootstrap | canal, 1.000 reamostragens, 95%, seed 42 |
+
+Candidate generation, comum aos cinco métodos:
+
+| K | Candidate Recall | Média de candidatos | Mediana |
+|---:|---:|---:|---:|
+| 5 | 0,7536 | 2,8233 | 3 |
+| 10 | 0,7744 | 4,0374 | 3 |
+| 20 | 0,7816 | 5,3958 | 3 |
+| 50 | 0,7845 | 6,8721 | 3 |
+
+Resultados de ranking e reconstrução projetada:
+
+| Abordagem | Tipo | R@1 overall | R@5 overall | MRR overall | MRR conditional | ARI | B-Cubed F1 | Exact | Fragmentation | Merge |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `zero_shot` | PILOT_PROXY | 0,5503 | 0,7536 | 0,6400 | 0,8158 | 0,3653 | 0,7281 | 0,1948 | 0,5451 | 0,1421 |
+| `co_training` | PILOT_PROXY | 0,4986 | 0,7270 | 0,5990 | 0,7635 | 0,3483 | 0,7083 | 0,1722 | 0,5950 | 0,1461 |
+| `weak_supervision` | PILOT_PROXY | 0,5733 | 0,7536 | 0,6541 | 0,8338 | 0,3631 | 0,7373 | 0,2209 | 0,4382 | 0,1785 |
+| `chi_zero_shot` | INSPIRED_BY | 0,2981 | 0,6667 | 0,4521 | 0,5763 | 0,2764 | 0,6879 | 0,1508 | 0,6152 | 0,1630 |
+| `irc_transfer` | INSPIRED_BY | 0,2802 | 0,5783 | 0,4096 | 0,5221 | 0,2287 | 0,6872 | 0,1413 | 0,4976 | 0,1502 |
+
+### 16.1 Achados que podem orientar a dissertação
+
+No recorte Neo4j, `weak_supervision` obteve o maior R@1, MRR overall, MRR
+conditional, B-Cubed F1 e Exact Match. Em diferença pareada por canal contra o
+baseline `zero_shot`, o ganho foi 0,0230 em R@1 (IC95% 0,0027–0,0368) e 0,0142
+em MRR (IC95% 0,0029–0,0212). Isso é evidência do piloto, não prova de
+superioridade universal.
+
+As duas condições externas ficaram abaixo dos proxies internos no ranking. A
+diferença `chi_zero_shot` versus `irc_transfer` possui intervalos pareados que
+incluem zero tanto para R@1 quanto para MRR; este piloto não sustenta uma diferença
+clara entre elas. O resultado é compatível com forte domain shift e também com a
+simplificação linear dos mecanismos originais. Não deve ser interpretado como
+falha dos artigos nem como avaliação de suas implementações oficiais.
+
+Métricas locais e estruturais não escolheram exatamente a mesma configuração:
+`weak_supervision` teve a menor fragmentação, mas merge maior que `zero_shot`.
+Esse contraste confirma a necessidade de separar reply recovery de conversation
+reconstruction.
+
+O aumento do cap de 20 para 50 produziu ganho pequeno de Candidate Recall
+(0,7816 em K=20 para 0,7845 em K=50), enquanto o custo subiu para 405.728 pares.
+Isso sugere retornos decrescentes após K=20 neste servidor e deve ser reavaliado
+por canal antes da expansão para outras comunidades.
+
+### 16.2 Restrições para qualquer alegação
+
+- os clusters são projeções sobre 2.247 mensagens cobertas por componentes de
+  replies explícitos, não todas as 7.158 mensagens do teste;
+- NMI alto coexistindo com ARI bem menor é plausível em partições com muitos
+  clusters pequenos e não deve ser reportado isoladamente;
+- thresholds compartilham uma regra de abstention, mas scores permanecem em
+  escalas diferentes;
+- canais do Neo4j continuam com decisão humana `pending` no artefato versionado;
+- ainda falta avaliação manual com mensagens sem `direct_reply` e anotação entre
+  avaliadores antes de conclusões finais da dissertação.
+
+Comandos verificados nesta etapa:
+
+```powershell
+uv sync --extra ui
+uv run pytest -q
+discord-disentangle all --config configs/experiments/neo4j_pilot.json
+discord-disentangle-ui
+```
+
+## 17. Correção da inspeção visual de conversas completas
+
+A primeira versão do `Conversation Explorer` lia corretamente os artefatos de
+threads, mas renderizava cada linha de `predicted_links.parquet` como um cartão
+pai–filho independente. Como o pai era repetido para cada filho, a interface dava
+a impressão incorreta de que a saída científica continha apenas pares, embora
+`message_assignments.parquet` já atribuísse cada mensagem a um
+`predicted_thread_id` completo.
+
+O explorador passou a usar a atribuição de mensagens como unidade de apresentação:
+
+- cada cartão corresponde agora a uma thread, com contagem de mensagens e
+  participantes;
+- cada mensagem aparece uma única vez, em ordem cronológica, acompanhada do pai
+  previsto e do score da ligação;
+- a profundidade do encadeamento é indicada visualmente, preservando ramificações;
+- ao selecionar uma thread específica, a interface carrega todas as suas mensagens,
+  inclusive as que estiverem fora da janela cronológica ou do split atualmente
+  usado para localizar o caso;
+- a referência Silver recebeu seletor próprio e o mesmo tratamento por componente;
+- os seletores pesquisam todas as threads do canal e split escolhidos, não apenas as
+  que aparecem na janela cronológica corrente;
+- `all` permanece limitado à janela para evitar carregar simultaneamente milhares de
+  conversas, mas organiza as mensagens visíveis em cartões por thread.
+
+Foram adicionados testes para impedir regressões em três contratos: expansão da
+thread prevista além da janela, ausência de duplicação pai–filho no modo `all` e
+expansão do componente Silver completo. No caso real
+`WEAK_SUPERVISION_5861f056533f`, no canal `graph-academy`, a interface reconstruída
+carrega 14 mensagens únicas, três participantes e o intervalo de 07:00:37 a
+09:41:45 UTC de 18 de agosto de 2023.
+
+### 17.1 Comparação dirigida pela referência Direct Reply
+
+O `direct_reply` permanece definido como evidência Silver positiva de alta
+confiança, e não como anotação exaustiva: a presença do vínculo sustenta que duas
+mensagens pertencem à mesma conversa, enquanto sua ausência não sustenta que elas
+pertençam a conversas diferentes.
+
+Ao selecionar um componente Silver, a interface agora localiza automaticamente
+todas as threads previstas que contêm suas mensagens e informa, por abordagem:
+
+- número de mensagens e vínculos explícitos no componente Silver;
+- quantidade de threads previstas usadas para representar o componente;
+- proporção das mensagens Silver preservadas na thread prevista dominante;
+- recuperação exata dos pais indicados por `direct_reply`;
+- quantidade de mensagens adicionais incorporadas à thread dominante.
+
+Esse último número é diagnóstico, não falso positivo automático, pois mensagens
+sem `direct_reply` continuam sem rótulo. No caso
+`SILVER_5d1ae7db4c24`, `weak_supervision` e `zero_shot` preservaram as 11/11
+mensagens em uma única thread e acrescentaram três mensagens. O primeiro recuperou
+6/10 pais explícitos exatos e o segundo 7/10. O exemplo demonstra por que acerto do
+pai e reconstrução da conversa devem ser analisados separadamente.
+
+Os seletores de canal também passaram a mostrar `channel_name`; a chave interna com
+ID só é acrescentada quando dois canais possuem o mesmo nome.
+
+## 18. Conversation Explorer orientado pelo objetivo Silver
+
+A revisão visual mostrou que controles de janela cronológica, posição inicial e
+seleção independente de threads previstas exigiam que o pesquisador descobrisse
+manualmente quais resultados correspondiam ao mesmo componente Silver. Essa
+organização foi removida do `Conversation Explorer`.
+
+O fluxo definitivo da página é orientado pela pergunta científica:
+
+1. escolher o canal pelo nome;
+2. escolher uma conversa Silver descrita por tamanho, participantes, data e trecho
+   inicial;
+3. visualizar o componente Silver completo como objetivo inicial;
+4. comparar simultaneamente as cinco abordagens sobre esse mesmo componente;
+5. abrir cada abordagem em uma visão de duas colunas: Silver à esquerda e
+   reconstrução à direita.
+
+As reconstruções mostram todas as threads previstas que interceptam o componente
+Silver. Mensagens da referência são marcadas em verde; mensagens acrescentadas pelo
+método, em amarelo. Cada vínculo informa se o pai de `direct_reply` foi preservado
+ou qual pai alternativo foi escolhido. Se um componente foi fragmentado, todos os
+fragmentos aparecem na mesma seção da abordagem.
+
+Os vínculos da referência visual são carregados de `test_gold_outcomes.parquet`, e
+não apenas dos pares presentes em `test_ranked_candidates.parquet`. Portanto, um
+`direct_reply` cujo pai ficou fora do conjunto de candidatos continua visível no
+objetivo Silver e é contabilizado como não reconstruído pelas abordagens. Isso evita
+inflar artificialmente a proximidade ao esconder justamente os casos sem cobertura.
+
+A tabela conjunta inclui as cinco condições (`zero_shot`, `co_training`,
+`weak_supervision`, `chi_zero_shot` e `irc_transfer`) e apresenta preservação das
+mensagens Silver, número de fragmentos, direct replies exatos, mensagens sugeridas e
+F1 de sobreposição. Para o conjunto Silver `S` e a thread prevista dominante `P`, o
+diagnóstico usa `precision = |S ∩ P| / |P|`, `recall = |S ∩ P| / |S|` e a média
+harmônica das duas. Esse F1 mede semelhança de conjuntos para inspeção; não transforma
+mensagens adicionais sem rótulo em falsos positivos científicos.
+
+No caso `SILVER_5d1ae7db4c24`:
+
+| Abordagem | Threads | Silver principal | Replies exatos | Sugeridas | F1 sobreposição |
+|---|---:|---:|---:|---:|---:|
+| `zero_shot` | 1 | 11/11 | 7/10 | 3 | 0,8800 |
+| `co_training` | 2 | 9/11 | 2/10 | 3 | 0,7826 |
+| `weak_supervision` | 1 | 11/11 | 6/10 | 3 | 0,8800 |
+| `chi_zero_shot` | 1 | 11/11 | 1/10 | 3 | 0,8800 |
+| `irc_transfer` | 8 | 4/11 | 0/10 | 2 | 0,4706 |
+
+Esse exemplo deixa visíveis três fenômenos distintos: preservação do conjunto de
+mensagens, recuperação do pai exato e inclusão de possíveis continuações ainda não
+anotadas. A página também oferece uma matriz vínculo a vínculo com todas as
+abordagens. A validação automatizada confirmou as cinco linhas, ausência dos antigos
+sliders e alinhamento ao mesmo componente Silver.

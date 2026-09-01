@@ -1,0 +1,89 @@
+{
+  "approach_id": "irc_transfer",
+  "feature_columns": [
+    "temporal_proximity",
+    "semantic_similarity",
+    "lexical_overlap",
+    "source_mentions_target",
+    "target_mentions_source",
+    "adjacent_message",
+    "author_turn",
+    "same_author",
+    "question_answer",
+    "technical_overlap",
+    "length_similarity",
+    "recency_rank_score"
+  ],
+  "implementation_type": "INSPIRED_BY",
+  "model": {
+    "bias": -1.622538547962901e-15,
+    "feature_mean": [
+      5.550698789491548e-17,
+      -1.6838382540148207e-19,
+      -1.3223218816212541e-18,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      5.38920759870128e-18,
+      1.0963452368173422e-19,
+      2.821816854255606e-19,
+      4.497285877036461e-15
+    ],
+    "feature_scale": [
+      0.008274504935523471,
+      0.1180099389732187,
+      0.0838785697823236,
+      0.36259481518631786,
+      0.3488074922742725,
+      0.5762739510568448,
+      0.43500957843860555,
+      0.43500957843860555,
+      0.23068877562183043,
+      0.07571395689755883,
+      0.3624970569279546,
+      0.4689825378891114
+    ],
+    "weights": [
+      -0.5487069866521211,
+      0.00014576218576538573,
+      0.0052622712487234305,
+      -0.010316724631468694,
+      -0.014381606629056977,
+      0.23001856644015883,
+      -0.002513428905526409,
+      0.002513428905526409,
+      0.006526010931097834,
+      0.006522987518303003,
+      0.014821786934487885,
+      0.2044515911545487
+    ]
+  },
+  "schema_version": "1.0",
+  "source": {
+    "annotation_files_read": 153,
+    "data_license": "CC-BY-4.0",
+    "dataset": "Kummerfeld et al. Ubuntu IRC train split",
+    "raw_and_annotation_train_files_sha256": "4bab83e2e4d8ea59d8a13d08d0d2f257c7204f558e9c0fd49c2e568e89434cf6",
+    "repository": "https://github.com/jkkummerfeld/irc-disentanglement",
+    "source_commit": "82ed04f9627a45d0d6f2ec3c8683c88eb408a0d5"
+  },
+  "training": {
+    "annotation_edges_with_unparsed_system_endpoint": 10945,
+    "annotation_rows_loaded": 69395,
+    "annotation_rows_processed_before_training_cap": 41278,
+    "discord_fine_tuning": false,
+    "irc_reply_edges_seen": 20425,
+    "irc_reply_edges_with_common_window_candidate": 20066,
+    "irc_sessions": 153,
+    "multiple_parents_preserved": true,
+    "negative_candidates_per_positive_cap": 6,
+    "non_past_or_outside_50_message_window": 345,
+    "pairwise_differences": 120000,
+    "parsed_chat_messages": 196146,
+    "regime": "supervised_pairwise_irc_reply_ranking",
+    "seed": 42,
+    "self_links_skipped_as_conversation_roots": 9908
+  }
+}

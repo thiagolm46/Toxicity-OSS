@@ -3,26 +3,36 @@
   "approaches": [
     "zero_shot",
     "co_training",
-    "weak_supervision"
+    "weak_supervision",
+    "chi_zero_shot",
+    "irc_transfer"
   ],
   "common": {
     "input_path": "data/processed/software_messages.parquet",
-    "output_dir": "data/processed/disentanglement_experiments/neo4j",
+    "output_dir": "data/processed/disentanglement_experiments/neo4j_pilot_v2",
     "guild_id": "787399249741479977",
     "guild_name": null,
     "train_fraction": 0.6,
     "validation_fraction": 0.2,
     "test_fraction": 0.2,
     "max_previous_messages": 50,
-    "max_candidates_per_message": 20,
+    "max_candidates_per_message": 50,
     "max_time_delta_hours": 24.0,
     "random_seed": 42,
     "review_sample_size": 100,
     "validation_abstention_quantile": 0.25,
+    "candidate_recall_ks": [5, 10, 20, 50],
+    "parent_distance_boundaries": [2, 5, 10, 20],
+    "time_gap_boundaries_seconds": [30, 120, 300, 900],
+    "competition_low_max": 5,
+    "competition_high_min": 15,
+    "bootstrap_resamples": 1000,
+    "bootstrap_confidence": 0.95,
+    "bootstrap_unit": "channel",
     "overwrite": false
   },
   "methodological_status": {
-    "fidelity": "pilot_proxy",
+    "fidelity": "mixed_pilot_proxy_and_inspired_by",
     "reproduction_claim": false,
     "test_reply_metadata_visible_to_approaches": false,
     "same_channel_only": true,
@@ -32,6 +42,8 @@
   "references": {
     "zero_shot": "https://aclanthology.org/2021.emnlp-main.400/",
     "co_training": "https://aclanthology.org/2021.emnlp-main.181/",
-    "weak_supervision": "https://aclanthology.org/D19-1410/"
+    "weak_supervision": "https://aclanthology.org/D19-1410/",
+    "chi_zero_shot": "https://aclanthology.org/2021.emnlp-main.400/",
+    "irc_transfer": "https://aclanthology.org/P19-1374/"
   }
 }

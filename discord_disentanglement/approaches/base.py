@@ -55,7 +55,19 @@ class DisentanglementApproach(ABC):
     approach_id: ClassVar[str]
     display_name: ClassVar[str]
     fidelity: ClassVar[str] = "pilot_proxy"
+    implementation_type: ClassVar[str] = "PILOT_PROXY"
     uses_direct_reply_training: ClassVar[bool] = False
+    uses_discord_labels: ClassVar[bool] = False
+    training_source: ClassVar[str] = "none"
+    paper_title: ClassVar[str | None] = None
+    paper_authors: ClassVar[str | None] = None
+    paper_year: ClassVar[int | None] = None
+    venue: ClassVar[str | None] = None
+    source_repository: ClassVar[str | None] = None
+    source_commit: ClassVar[str | None] = None
+    checkpoint: ClassVar[str | None] = None
+    adaptations: ClassVar[tuple[str, ...]] = ()
+    requires_checkpoint: ClassVar[bool] = False
     references: ClassVar[tuple[ApproachReference, ...]] = ()
     link_threshold: ClassVar[float] = 0.50
 
@@ -77,11 +89,31 @@ class DisentanglementApproach(ABC):
             "approach_id": self.approach_id,
             "display_name": self.display_name,
             "fidelity": self.fidelity,
-            "claim": (
-                "Implementacao leve para estudo piloto; nao constitui reproducao "
-                "fiel nem reimplementacao oficial do artigo de referencia."
-            ),
+            "implementation_type": self.implementation_type,
+            "claim": self._scientific_claim(),
             "uses_direct_reply_training": self.uses_direct_reply_training,
+            "scientific_metadata": {
+                "paper_title": self.paper_title,
+                "paper_authors": self.paper_authors,
+                "paper_year": self.paper_year,
+                "venue": self.venue,
+                "source_repository": self.source_repository,
+                "source_commit": self.source_commit,
+                "checkpoint": self.checkpoint,
+                "adaptations": list(self.adaptations),
+                "training_source": self.training_source,
+                "uses_discord_labels": self.uses_discord_labels,
+                "uses_direct_reply_train": self.uses_direct_reply_training,
+                "uses_direct_reply_test": "evaluation_only",
+            },
+            "capabilities": {
+                "requires_training": self.requires_training,
+                "requires_checkpoint": self.requires_checkpoint,
+                "produces_rankings": True,
+                "produces_links": True,
+                "produces_threads": True,
+                "supports_scores": True,
+            },
             "default_link_threshold": self.link_threshold,
             "effective_link_threshold": self.effective_link_threshold,
             "threshold_calibration": self.threshold_diagnostics,
@@ -92,6 +124,26 @@ class DisentanglementApproach(ABC):
 
     def method_hyperparameters(self) -> dict[str, Any]:
         return {}
+
+    def preflight(self) -> None:
+        """Validate optional resources before any run artifacts are written."""
+
+    def _scientific_claim(self) -> str:
+        if self.implementation_type == "PILOT_PROXY":
+            return (
+                "Proxy exploratorio de piloto; nao constitui reproducao fiel nem "
+                "reimplementacao oficial do artigo relacionado."
+            )
+        if self.implementation_type == "INSPIRED_BY":
+            return (
+                "Implementacao inspirada no mecanismo cientifico descrito; nao e "
+                "reproducao, reimplementacao fiel nem codigo oficial do artigo."
+            )
+        return f"Implementacao classificada como {self.implementation_type}."
+
+    @property
+    def requires_training(self) -> bool:
+        return False
 
 
 PREDICTION_FEATURE_COLUMNS: tuple[str, ...] = (
@@ -112,7 +164,10 @@ PREDICTION_FEATURE_COLUMNS: tuple[str, ...] = (
 FORBIDDEN_PREDICTION_COLUMNS: frozenset[str] = frozenset(
     {
         "reply_to_message_id",
+        "reply_to",
         "reply_target_id",
+        "reference_id",
+        "reference",
         "referenced_message_id",
         "message_reference",
         "referenced_message",
@@ -120,6 +175,9 @@ FORBIDDEN_PREDICTION_COLUMNS: frozenset[str] = frozenset(
         "direct_reply",
         "label",
         "gold_target_message_id",
+        "silver_parent_message_id",
+        "is_silver_parent",
+        "candidate_available",
         "native_thread_id",
         "thread_id",
     }

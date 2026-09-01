@@ -24,8 +24,6 @@ from .config import ExperimentConfig
 
 
 USER_MENTION_RE = re.compile(r"<@!?([A-Za-z0-9_]+)>")
-URL_RE = re.compile(r"https?://[^\s<>()]+", re.IGNORECASE)
-CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
 
 
 @dataclass(slots=True)
@@ -40,8 +38,21 @@ class PreparedExperiment:
     prediction_columns: tuple[str, ...]
 
 
+def load_experiment_messages(config: ExperimentConfig) -> pd.DataFrame:
+    """Load the scoped, privacy-safe message table without generating candidates.
+
+    This public reader is shared by the experiment preparation and the artifact-only
+    inspection UI, preventing a second interpretation of aliases, anonymization or
+    temporal split boundaries.
+    """
+    messages, _, _ = _load_messages(config)
+    messages, _ = _assign_temporal_splits(messages, config)
+    return messages
+
+
 def prepare_experiment(config: ExperimentConfig) -> PreparedExperiment:
     messages, input_fingerprint, quality = _load_messages(config)
+    quality["input_file_sha256"] = _sha256_file(config.input_path)
     messages, split_summary = _assign_temporal_splits(messages, config)
     vectors, token_sets, technical_sets = _build_train_fitted_tfidf(messages)
     candidates = _build_candidates(
@@ -109,7 +120,7 @@ def _load_messages(
                 "author_id_internal": author_id,
                 "timestamp": pd.Timestamp(row["timestamp"]),
                 "content_internal": content,
-                "content_normalized": _privacy_safe_text(content),
+                "content_normalized": content,
                 "content_mentions_internal": tuple(USER_MENTION_RE.findall(content)),
                 "reply_target_internal": reply_target,
             }
@@ -421,6 +432,8 @@ def _build_candidates(
         "source_timestamp": [],
         "target_timestamp": [],
         "delta_seconds": [],
+        "message_distance": [],
+        "candidate_generation_rank": [],
         "temporal_proximity": [],
         "semantic_similarity": [],
         "lexical_overlap": [],
@@ -475,19 +488,44 @@ def _build_candidates(
             if not eligible:
                 continue
 
-            # Half of the cap preserves local continuity; the remainder recovers
-            # topically strong older candidates.  Selection never consults reply labels.
-            recent_cap = (config.max_candidates_per_message + 1) // 2
-            selected = eligible[:recent_cap]
-            selected_positions = {item[0] for item in selected}
+            # A cap-independent interleaving makes each prefix K a real candidate
+            # policy: odd ranks favor recency and even ranks favor topical strength.
+            # Candidate Recall@K can therefore be interpreted without regenerating
+            # candidates or consulting reply labels.
+            selected: list[tuple[int, float, int, float]] = []
+            selected_positions: set[int] = set()
             topical = sorted(
-                (item for item in eligible if item[0] not in selected_positions),
+                eligible,
                 key=lambda item: (-item[3], item[1], records[item[0]]["message_id"]),
             )
-            selected.extend(topical[: config.max_candidates_per_message - len(selected)])
-            selected.sort(key=lambda item: (item[1], records[item[0]]["message_id"]))
+            recent_cursor = 0
+            topical_cursor = 0
+            while (
+                len(selected) < config.max_candidates_per_message
+                and len(selected_positions) < len(eligible)
+            ):
+                source_list = eligible if len(selected) % 2 == 0 else topical
+                cursor = recent_cursor if source_list is eligible else topical_cursor
+                while cursor < len(source_list) and source_list[cursor][0] in selected_positions:
+                    cursor += 1
+                if source_list is eligible:
+                    recent_cursor = cursor + 1
+                else:
+                    topical_cursor = cursor + 1
+                if cursor >= len(source_list):
+                    source_list = topical if source_list is eligible else eligible
+                    cursor = 0
+                    while cursor < len(source_list) and source_list[cursor][0] in selected_positions:
+                        cursor += 1
+                    if cursor >= len(source_list):
+                        break
+                item = source_list[cursor]
+                selected.append(item)
+                selected_positions.add(item[0])
 
-            for target_position, delta, lag, semantic in selected:
+            for candidate_rank, (target_position, delta, lag, semantic) in enumerate(
+                selected, start=1
+            ):
                 target = records[target_position]
                 source_tokens = token_sets[source_position]
                 target_tokens = token_sets[target_position]
@@ -501,6 +539,8 @@ def _build_candidates(
                     source,
                     target,
                     delta=delta,
+                    message_distance=float(source_position - target_position),
+                    candidate_generation_rank=float(candidate_rank),
                     temporal_proximity=math.exp(-delta / temporal_scale),
                     semantic_similarity=semantic,
                     lexical_overlap=_jaccard(source_tokens, target_tokens),
@@ -527,6 +567,8 @@ def _build_candidates(
     candidates = pd.DataFrame(columns)
     numeric_columns = [
         "delta_seconds",
+        "message_distance",
+        "candidate_generation_rank",
         "temporal_proximity",
         "semantic_similarity",
         "lexical_overlap",
@@ -542,6 +584,9 @@ def _build_candidates(
     ]
     if not candidates.empty:
         candidates[numeric_columns] = candidates[numeric_columns].astype("float32")
+        candidates[["message_distance", "candidate_generation_rank"]] = candidates[
+            ["message_distance", "candidate_generation_rank"]
+        ].astype("int32")
     return candidates
 
 
@@ -623,13 +668,6 @@ def _reply_target_from_row(row: dict[str, Any]) -> str | None:
     return None
 
 
-def _privacy_safe_text(text: str) -> str:
-    normalized = CODE_BLOCK_RE.sub(" <CODE_BLOCK> ", text)
-    normalized = USER_MENTION_RE.sub(" <USER_MENTION> ", normalized)
-    normalized = URL_RE.sub(" <URL> ", normalized)
-    return re.sub(r"\s+", " ", normalized).strip()
-
-
 def _jaccard(left: set[str], right: set[str]) -> float:
     if not left or not right:
         return 0.0
@@ -673,3 +711,11 @@ def _filtered_snapshot_fingerprint(messages: pd.DataFrame) -> str:
 
 def _timestamp_text(value: Any) -> str:
     return pd.Timestamp(value).isoformat().replace("+00:00", "Z")
+
+
+def _sha256_file(path: Any) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

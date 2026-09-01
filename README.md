@@ -18,7 +18,11 @@ discord_filtering/            filtragem genérica por perfil externo
 discord_disentanglement/
   approaches/                 uma implementação por abordagem
   experiments/                preparação, avaliação e artefatos comuns
+  evaluation/                 métricas silver, bootstrap e leakage audit
+  training/                   geração reproduzível de checkpoints externos leves
+  ui/                         inspeção Streamlit de artefatos concluídos
 configs/
+  approaches/                 checkpoints JSON versionados
   filtering/                  keywords, pesos e limiares por domínio
   experiments/                configuração do piloto Neo4j
 annotations/                  decisões humanas versionáveis
@@ -37,11 +41,18 @@ grupos de termos, pesos e limiares.
 uv sync
 ```
 
+Para incluir a interface científica:
+
+```powershell
+uv sync --extra ui
+```
+
 Comandos instalados:
 
 - `discord-data`: download, extração e DuckDB;
 - `discord-filter`: seleção de servidores e canais;
-- `discord-disentangle`: três experimentos comparáveis.
+- `discord-disentangle`: cinco experimentos comparáveis;
+- `discord-disentangle-ui`: inspeção científica dos artefatos prontos.
 
 ## Fonte congelada de software
 
@@ -97,11 +108,13 @@ registro de validação.
 
 ## Disentanglement no Neo4j
 
-As três abordagens são executáveis separadamente:
+As cinco abordagens são executáveis separadamente:
 
 - `zero_shot`: combinação fixa de sinais, sem ajuste por rótulos;
 - `co_training`: duas visões com pseudo-rótulos;
 - `weak_supervision`: ranker pairwise treinado somente com replies explícitos de treino.
+- `chi_zero_shot`: response selection externo auto-supervisionado, sem labels Discord;
+- `irc_transfer`: ranker treinado em replies anotados do Ubuntu IRC, sem fine-tuning Discord.
 
 Executar todas com a mesma preparação e o mesmo conjunto de candidatos:
 
@@ -109,7 +122,7 @@ Executar todas com a mesma preparação e o mesmo conjunto de candidatos:
 discord-disentangle all `
   --config configs/experiments/neo4j_pilot.json `
   --input data/processed/software_messages.parquet `
-  --output data/processed/disentanglement_experiments/neo4j_pilot_v1
+  --output data/processed/disentanglement_experiments/neo4j_pilot_v2
 ```
 
 Para uma abordagem isolada:
@@ -122,15 +135,52 @@ discord-disentangle run `
   --output data/processed/disentanglement_experiments/neo4j_zero_shot
 ```
 
-Os valores válidos de `--approach` são `zero_shot`, `co_training` e
-`weak_supervision`.
+Os valores válidos de `--approach` são `zero_shot`, `co_training`,
+`weak_supervision`, `chi_zero_shot` e `irc_transfer`.
 
-Os módulos são adaptações exploratórias marcadas como `pilot_proxy`; não são
-reproduções oficiais dos métodos SOTA. A avaliação usa replies explícitos como
-silver standard, somente no split de teste. Candidatos e links são sempre do
-mesmo canal e apontam estritamente para uma mensagem anterior.
+### Conversas nativas para anotação humana
 
-## Resultado atual do piloto
+Para separar as mensagens do Neo4j no export do Discord Unveiled e formar a
+referência inicial por replies explícitos do Discord:
+
+```powershell
+discord-disentangle gold-standard `
+  --input data/processed/software_messages_discord_unveiled_2026-08-25.parquet `
+  --output data/processed/disentanglement_experiments/neo4j_native_reply_silver
+```
+
+O comando restringe a entrada ao `guild_id` Neo4j por padrão. Para um único
+canal, acrescente `--channel-id <id>` ou `--channel-name <nome>`.
+
+A saída contém `native_reply_messages.parquet` (recorte Neo4j),
+`native_reply_edges.parquet` (respostas diretas válidas) e
+`native_reply_conversations.parquet` (uma linha por conversa enraizada). Em
+`messages_json`, as mensagens estão em ordem temporal e cada item mantém o
+respectivo `reply_to_message_id`; portanto, várias respostas para uma mesma
+mensagem permanecem na mesma conversa, sem perder a ramificação.
+
+`native_reply_annotation_queue.csv` é a fila de revisão humana, com uma linha
+por conversa e campos `reply_edges_valid`, `conversation_complete` e
+`ambiguity`. As respostas explícitas constituem referência *silver*; só as
+decisões humanas registradas nessa fila podem formar o gold standard final.
+
+Os três módulos anteriores continuam marcados `PILOT_PROXY`; os dois novos são
+`INSPIRED_BY`. Nenhum é reprodução oficial. A avaliação separa geração de
+candidatos, ranking overall/conditional e reconstrução projetada de threads
+silver. Candidatos e links são sempre do mesmo canal e apontam estritamente para
+uma mensagem anterior.
+
+Para abrir a interface após a execução:
+
+```powershell
+discord-disentangle-ui
+```
+
+A UI lê os Parquets/JSON existentes e permite explorar mensagens cronológicas,
+referência silver, threads previstas, top-K, divergência entre métodos e erros.
+Ela não executa treinamento nem inferência.
+
+## Resultado preservado do piloto v1
 
 | Abordagem | Recall@1 | Recall@3 | Recall@5 | MRR |
 |---|---:|---:|---:|---:|
@@ -140,6 +190,12 @@ mesmo canal e apontam estritamente para uma mensagem anterior.
 
 A cobertura do pai verdadeiro no conjunto de candidatos foi 0,7809. Portanto,
 as métricas de ranking não devem ser interpretadas sem essa limitação.
+
+O piloto v1 permanece preservado para regressão. O piloto v2 das cinco abordagens
+foi concluído em `data/processed/disentanglement_experiments/neo4j_pilot_v2`:
+Candidate Recall@50 = 0,7845; o maior MRR overall observado foi 0,6541 em
+`weak_supervision`. A tabela completa, intervalos e restrições de interpretação
+estão no registro metodológico.
 
 ## Aquisição e extração
 
@@ -160,4 +216,7 @@ uv run pytest -q
 ```
 
 O histórico técnico, as decisões metodológicas, limitações e valores completos
-do piloto estão em `docs/methodology/REFACTORING_RESEARCH_LOG.md`.
+do piloto estão em `docs/methodology/REFACTORING_RESEARCH_LOG.md`. A definição
+dos cinco métodos está em `docs/methodology/DISENTANGLEMENT_METHODS.md`; o
+protocolo das métricas está em
+`docs/methodology/DISENTANGLEMENT_EVALUATION.md`.

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 
 FIELD_ALIASES: dict[str, tuple[str, ...]] = {
@@ -88,7 +89,27 @@ def _load_parquet(
     channel_name: str | None,
     channel_id: str | None,
 ) -> list[dict[str, Any]]:
-    dataframe = pd.read_parquet(path)
+    available_columns = set(pq.ParquetFile(path).schema.names)
+    columns = [
+        alias
+        for aliases in FIELD_ALIASES.values()
+        for alias in aliases
+        if "." not in alias and alias in available_columns
+    ]
+    filters: list[tuple[str, str, str]] = []
+    for column, value in (
+        ("guild_id", guild_id),
+        ("guild_name", guild_name),
+        ("channel_id", channel_id),
+        ("channel_name", channel_name),
+    ):
+        if value and column in available_columns:
+            filters.append((column, "==", value))
+    dataframe = pd.read_parquet(
+        path,
+        columns=columns or None,
+        filters=filters or None,
+    )
     if guild_id and "guild_id" in dataframe.columns:
         dataframe = dataframe[dataframe["guild_id"].astype(str) == str(guild_id)]
     if guild_name and "guild_name" in dataframe.columns:

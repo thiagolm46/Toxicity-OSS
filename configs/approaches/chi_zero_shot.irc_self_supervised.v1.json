@@ -1,0 +1,84 @@
+{
+  "approach_id": "chi_zero_shot",
+  "feature_columns": [
+    "temporal_proximity",
+    "semantic_similarity",
+    "lexical_overlap",
+    "source_mentions_target",
+    "target_mentions_source",
+    "adjacent_message",
+    "author_turn",
+    "same_author",
+    "question_answer",
+    "technical_overlap",
+    "length_similarity",
+    "recency_rank_score"
+  ],
+  "implementation_type": "INSPIRED_BY",
+  "model": {
+    "bias": 0.26305154658289986,
+    "feature_mean": [
+      0.8282304352405061,
+      0.12955354569655356,
+      0.08708944354245783,
+      0.23045,
+      0.27925,
+      1.0,
+      1.0,
+      0.38785,
+      0.36102833333318235,
+      0.024563562979418228,
+      0.9403920483970631,
+      1.0
+    ],
+    "feature_scale": [
+      0.3389685600928124,
+      0.17087972707993104,
+      0.13059863224550658,
+      0.4211208822891456,
+      0.44863062479067095,
+      1.0,
+      1.0,
+      0.48726007172777663,
+      0.08553280212230618,
+      0.1464364000371587,
+      0.14147096193123507,
+      1.0
+    ],
+    "weights": [
+      1.0180487928453512,
+      0.2776033847637684,
+      0.1482000094670745,
+      0.8107530536412552,
+      0.6551004158946038,
+      0.0,
+      0.0,
+      1.2901515993514197,
+      -0.02768616714375519,
+      0.062251537280349496,
+      -0.07235962168522322,
+      0.0
+    ]
+  },
+  "schema_version": "1.0",
+  "source": {
+    "annotation_files_read": 0,
+    "data_license": "CC-BY-4.0",
+    "dataset": "Kummerfeld et al. Ubuntu IRC train split",
+    "raw_train_files_sha256": "9de9918f94907ef8767a0dc4f6abffd56ec14ad9cffe70c8144fcc44f5390a02",
+    "repository": "https://github.com/jkkummerfeld/irc-disentanglement",
+    "source_commit": "82ed04f9627a45d0d6f2ec3c8683c88eb408a0d5"
+  },
+  "training": {
+    "annotation_files_read": 0,
+    "attention_adapter": "featurewise_max_bag_training_then_individual_pair_logit",
+    "irc_sessions": 153,
+    "negative_response_definition": "response sampled from a different IRC session",
+    "parsed_chat_messages": 196146,
+    "positive_context_definition": "chronologically preceding IRC context",
+    "regime": "self_supervised_entangled_context_response_selection",
+    "reply_labels_used": 0,
+    "response_selection_bags": 60000,
+    "seed": 42
+  }
+}

@@ -24,6 +24,16 @@ class ZeroShotResponseSelectionApproach(DisentanglementApproach):
     approach_id = "zero_shot"
     display_name = "Zero-shot response selection (pilot proxy)"
     link_threshold = 0.61
+    implementation_type = "PILOT_PROXY"
+    training_source = "none_frozen_internal_priors"
+    paper_title = "Zero-Shot Dialogue Disentanglement by Self-Supervised Entangled Response Selection"
+    paper_authors = "Ta-Chung Chi; Alexander I. Rudnicky"
+    paper_year = 2021
+    venue = "EMNLP 2021"
+    source_repository = "https://github.com/chijames/zero_shot_dialogue_disentanglement"
+    adaptations = (
+        "Baseline heuristico interno; nao utiliza o modelo ou checkpoint do artigo.",
+    )
     references = (
         ApproachReference(
             citation=(

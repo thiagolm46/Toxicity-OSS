@@ -43,6 +43,17 @@ class UnsupervisedCoTrainingApproach(DisentanglementApproach):
     approach_id = "co_training"
     display_name = "Unsupervised two-view co-training (pilot proxy)"
     link_threshold = 0.58
+    implementation_type = "PILOT_PROXY"
+    training_source = "discord_unlabeled_pseudo_labels"
+    paper_title = "Unsupervised Conversation Disentanglement through Co-Training"
+    paper_authors = "Hui Liu; Zhan Shi; Xiaodan Zhu"
+    paper_year = 2021
+    venue = "EMNLP 2021"
+    source_repository = "https://github.com/LayneIns/Unsupervised_dialo_disentanglement"
+    adaptations = (
+        "Duas visoes lineares sobre features comuns; nao reutiliza a arquitetura oficial.",
+        "Pseudo-rotulos limitados ao split de treino sem direct_reply.",
+    )
     references = (
         ApproachReference(
             citation=(
@@ -61,6 +72,10 @@ class UnsupervisedCoTrainingApproach(DisentanglementApproach):
         self.rounds = rounds
         self._conversation_model: LogisticModel | None = None
         self._topic_model: LogisticModel | None = None
+
+    @property
+    def requires_training(self) -> bool:
+        return True
 
     def fit(self, data: ApproachFitData) -> None:
         if data.train_candidates.empty:

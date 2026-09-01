@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import platform
+import subprocess
 import sys
 from importlib.metadata import version
 from datetime import datetime, timezone
@@ -25,6 +27,8 @@ ARTIFACT_FILENAMES: tuple[str, ...] = (
     "metrics.json",
     "manifest.json",
     "review_sample.csv",
+    "test_gold_outcomes.parquet",
+    "silver_projection.parquet",
 )
 
 
@@ -49,6 +53,8 @@ def rank_and_select_links(
             "source_timestamp",
             "target_timestamp",
             "delta_seconds",
+            "message_distance",
+            "candidate_generation_rank",
         ]
     ].copy()
     ranked["score"] = pd.Series(scores, index=ranked.index, dtype="float64")
@@ -89,6 +95,26 @@ def rank_and_select_links(
         "selection_threshold",
     ]
     return ranked.reset_index(drop=True), selected[output_columns].reset_index(drop=True)
+
+
+def annotate_ranking_for_evaluation(
+    ranked_candidates: pd.DataFrame,
+    direct_reply_gold: pd.DataFrame,
+) -> pd.DataFrame:
+    """Attach silver fields only after scores/ranks have been produced."""
+    ranked = ranked_candidates.copy()
+    gold = direct_reply_gold.rename(
+        columns={"target_message_id": "silver_parent_message_id"}
+    )[["source_message_id", "silver_parent_message_id"]]
+    ranked = ranked.merge(gold, on="source_message_id", how="left", validate="many_to_one")
+    ranked["is_silver_parent"] = (
+        ranked["target_message_id"].astype(str)
+        == ranked["silver_parent_message_id"].fillna("").astype(str)
+    )
+    available = ranked.groupby("source_message_id", sort=False)["is_silver_parent"].transform("any")
+    ranked["candidate_available"] = available.astype(bool)
+    ranked["time_gap_seconds"] = ranked["delta_seconds"].astype(float)
+    return ranked
 
 
 def build_message_assignments(
@@ -255,6 +281,9 @@ def write_run_artifacts(
     predicted_threads: pd.DataFrame,
     metrics: dict[str, Any],
     review_sample: pd.DataFrame,
+    gold_outcomes: pd.DataFrame,
+    silver_projection: pd.DataFrame,
+    leakage_audit: dict[str, Any],
     scoring_diagnostics: dict[str, Any],
 ) -> dict[str, Path]:
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -279,6 +308,8 @@ def write_run_artifacts(
         encoding="utf-8",
     )
     review_sample.to_csv(paths["review_sample.csv"], index=False, encoding="utf-8")
+    gold_outcomes.to_parquet(paths["test_gold_outcomes.parquet"], index=False)
+    silver_projection.to_parquet(paths["silver_projection.parquet"], index=False)
 
     artifact_checksums = {
         name: _sha256_file(path)
@@ -290,15 +321,31 @@ def write_run_artifacts(
         "approach_module": approach_source_path,
         "approach_base_module": approach_source_path.with_name("base.py"),
         "approach_math_module": approach_source_path.with_name("math_utils.py"),
+        "external_checkpoint_loader": approach_source_path.with_name(
+            "external_checkpoint.py"
+        ),
         "artifact_module": Path(__file__),
         "runner_module": Path(__file__).with_name("runner.py"),
         "data_module": Path(__file__).with_name("data.py"),
+        "config_module": Path(__file__).with_name("config.py"),
         "metrics_module": Path(__file__).with_name("metrics.py"),
+        "ranking_evaluation_module": Path(__file__).parents[1]
+        / "evaluation"
+        / "ranking.py",
+        "clustering_evaluation_module": Path(__file__).parents[1]
+        / "evaluation"
+        / "clustering.py",
+        "statistics_evaluation_module": Path(__file__).parents[1]
+        / "evaluation"
+        / "statistics.py",
+        "leakage_evaluation_module": Path(__file__).parents[1]
+        / "evaluation"
+        / "leakage.py",
     }
     manifest = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "implementation": {
-            "version": "pilot_proxy_v1",
+            "version": "scientific_evaluation_v2",
             "source_sha256": {
                 name: _sha256_file(path)
                 for name, path in experiment_source_paths.items()
@@ -310,6 +357,14 @@ def write_run_artifacts(
                 "numpy": version("numpy"),
                 "pandas": version("pandas"),
                 "pyarrow": version("pyarrow"),
+                "scikit_learn": version("scikit-learn"),
+                "scipy": version("scipy"),
+            },
+            "git_commit": _git_commit(),
+            "hardware": {
+                "platform": platform.platform(),
+                "machine": platform.machine(),
+                "processor": platform.processor(),
             },
         },
         "created_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -323,6 +378,10 @@ def write_run_artifacts(
         "input": {
             "path": str(config.input_path),
             "filtered_guild_snapshot_sha256": prepared.input_fingerprint,
+            "dataset_file_sha256": prepared.data_quality.get("input_file_sha256"),
+            "config_sha256": hashlib.sha256(
+                json.dumps(config.as_dict(), sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest(),
         },
         "common_candidate_protocol": {
             "same_channel_only": True,
@@ -332,7 +391,7 @@ def write_run_artifacts(
             "prediction_columns": list(prepared.prediction_columns),
             "reply_or_thread_columns_present": False,
             "tfidf_idf_fit_split": "train_only",
-            "candidate_cap_selection": "half_recent_then_topical_without_labels",
+            "candidate_cap_selection": "cap_independent_interleaving_recent_and_topical_without_labels",
         },
         "temporal_split": prepared.split_summary,
         "label_isolation": {
@@ -342,6 +401,7 @@ def write_run_artifacts(
             "validation_reply_fields_used": False,
             "train_reply_fields_used_by_this_approach": approach.uses_direct_reply_training,
         },
+        "leakage_audit": leakage_audit,
         "data_quality": prepared.data_quality,
         "scoring_diagnostics": scoring_diagnostics,
         "predicted_link_invariants": {
@@ -378,3 +438,17 @@ def _cross_channel_count(links: pd.DataFrame) -> int:
         "name:" + links["target_channel_name"].fillna("").astype(str).str.casefold(),
     )
     return int(source_key.ne(target_key).sum())
+
+
+def _git_commit() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip() or None

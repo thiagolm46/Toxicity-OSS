@@ -21,6 +21,12 @@ class WeakSupervisionPairwiseRankerApproach(DisentanglementApproach):
     approach_id = "weak_supervision"
     display_name = "Weak supervision direct-reply pairwise ranker (pilot proxy)"
     uses_direct_reply_training = True
+    uses_discord_labels = True
+    implementation_type = "PILOT_PROXY"
+    training_source = "discord_direct_reply_train_only"
+    adaptations = (
+        "Ranker logistico pairwise local; nao usa Sentence-BERT na implementacao atual.",
+    )
     link_threshold = 0.55
     references = (
         ApproachReference(
@@ -41,6 +47,10 @@ class WeakSupervisionPairwiseRankerApproach(DisentanglementApproach):
         super().__init__()
         self.negatives_per_positive = negatives_per_positive
         self._model: LogisticModel | None = None
+
+    @property
+    def requires_training(self) -> bool:
+        return True
 
     def fit(self, data: ApproachFitData) -> None:
         if data.train_gold.empty:
@@ -74,7 +84,8 @@ class WeakSupervisionPairwiseRankerApproach(DisentanglementApproach):
             if negative_positions.size == 0:
                 continue
             sources_with_gold_candidate += 1
-            # The common candidate order is deterministic and recent-first.
+            # The common candidate order deterministically interleaves recency
+            # and topical strength; no reply label participates in that order.
             selected_negatives = negative_positions[: self.negatives_per_positive]
             positive = candidate_matrix[int(positive_positions[0])]
             for negative_position in selected_negatives:
