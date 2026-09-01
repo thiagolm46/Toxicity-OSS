@@ -19,6 +19,11 @@ Valores permitidos em `manual_decision`:
 
 Preencha `annotator_id`, `reviewed_at`, `reason_code` e `notes` sem incluir texto bruto das mensagens. Uma segunda planilha ou colunas adicionais podem registrar o segundo anotador; divergências devem ser resolvidas por consenso e o acordo deve ser reportado.
 
+Para a anotação de janelas conversacionais, siga
+`docs/methodology/ANNOTATION_CODEBOOK.md`. O codebook separa evidência nativa
+positiva de replies explícitos da ausência de observação, que nunca é rótulo
+negativo.
+
 O hash registrado corresponde ao arquivo-fonte `data/processed/software_messages.parquet` observado em 2026-08-18:
 
 ```text

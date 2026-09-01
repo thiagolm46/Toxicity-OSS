@@ -138,31 +138,94 @@ discord-disentangle run `
 Os valores válidos de `--approach` são `zero_shot`, `co_training`,
 `weak_supervision`, `chi_zero_shot` e `irc_transfer`.
 
-### Conversas nativas para anotação humana
+### Janelas nativas para anotação humana
 
-Para separar as mensagens do Neo4j no export do Discord Unveiled e formar a
-referência inicial por replies explícitos do Discord:
+Para separar as mensagens do Neo4j no export do Discord Unveiled e criar as
+unidades de anotação humana:
 
 ```powershell
 discord-disentangle gold-standard `
   --input data/processed/software_messages_discord_unveiled_2026-08-25.parquet `
-  --output data/processed/disentanglement_experiments/neo4j_native_reply_silver
+  --output data/processed/disentanglement_experiments/neo4j_annotation_windows_w100_c200 `
+  --annotated-window-size 100 `
+  --context-message-count 200
 ```
 
 O comando restringe a entrada ao `guild_id` Neo4j por padrão. Para um único
 canal, acrescente `--channel-id <id>` ou `--channel-name <nome>`.
 
-A saída contém `native_reply_messages.parquet` (recorte Neo4j),
-`native_reply_edges.parquet` (respostas diretas válidas) e
-`native_reply_conversations.parquet` (uma linha por conversa enraizada). Em
-`messages_json`, as mensagens estão em ordem temporal e cada item mantém o
-respectivo `reply_to_message_id`; portanto, várias respostas para uma mesma
-mensagem permanecem na mesma conversa, sem perder a ramificação.
+A unidade é uma janela contínua de mensagens de um único canal, e não uma
+conversa inferida. As janelas anotadas são consecutivas e não se sobrepõem; cada
+uma recebe até `--context-message-count` mensagens imediatamente anteriores.
+Os valores 100/200 são apenas o primeiro piloto e devem ser variados antes da
+definição do protocolo final.
 
-`native_reply_annotation_queue.csv` é a fila de revisão humana, com uma linha
-por conversa e campos `reply_edges_valid`, `conversation_complete` e
-`ambiguity`. As respostas explícitas constituem referência *silver*; só as
-decisões humanas registradas nessa fila podem formar o gold standard final.
+A saída contém `native_reply_messages.parquet` (recorte Neo4j),
+`native_reply_edges.parquet` (evidência de respostas diretas válidas) e
+`native_reply_annotation_windows.csv` (uma linha por janela). Em
+`messages_json`, as mensagens estão em ordem temporal e `window_role` distingue
+`context` de `annotated`. Apenas `annotated` recebe tarefa em
+`human_reply_source_statuses_json`; qualquer mensagem anterior visível, inclusive
+`context`, pode ser escolhida como antecedente em `human_reply_edges_json`. Uma
+fonte pode registrar múltiplas arestas. Um reply para uma mensagem anterior ao
+contexto é contabilizado em `native_reply_targets_outside_window_count`, sem
+inventar uma fronteira de conversa.
+
+A saída preserva IDs de servidor/canal/autor, timestamps original e de edição,
+tipo de mensagem, reply e thread nativos, menções, reactions, attachments,
+embeds, stickers, roles, flags, bot/webhook e o payload original em
+`native_fields_json`. `native_available_fields` mostra o que existia na fonte;
+um campo indisponível não pode ser lido como vazio ou negativo. Esses metadados
+não entram como features sem uma decisão experimental explícita.
+
+Antes de anotar, achate as janelas em tabelas Parquet:
+
+```powershell
+discord-disentangle build-annotation-bundle `
+  --annotation-windows data/processed/disentanglement_experiments/neo4j_annotation_windows_rich_2026-09-01_w100_c200/native_reply_annotation_windows.csv `
+  --output data/processed/disentanglement_experiments/neo4j_annotation_bundle_rich_2026-09-01_w100_c200
+```
+
+O bundle contém `messages.parquet` com uma linha por mensagem real,
+`sample_messages.parquet` com a participação de cada mensagem em uma amostra,
+`annotations.parquet` com uma linha por aresta humana e `source_statuses.parquet`
+para decisões sem aresta. `sample_messages.parquet` concentra `sample_id`,
+`is_context` e `sequence`, evitando duplicar conteúdo e metadados. O anotador
+não atribui `conversation_id`; uma fonte pode ter múltiplos antecedentes em
+`annotations.parquet`.
+
+Para trabalhar somente em um diretório de dados, publique o conjunto autocontido:
+
+```powershell
+discord-disentangle publish-annotation-dataset `
+  --bundle-dir data/processed/disentanglement_experiments/neo4j_annotation_bundle_rich_2026-09-01_w100_c200 `
+  --native-reply-edges data/processed/disentanglement_experiments/neo4j_annotation_windows_rich_2026-09-01_w100_c200/native_reply_edges.parquet `
+  --codebook docs/methodology/ANNOTATION_CODEBOOK.md `
+  --output data/annotation/neo4j_v1_w100_c200
+```
+
+Esse diretório contém somente `messages.parquet`, `sample_messages.parquet`,
+`annotations.parquet`, `source_statuses.parquet`,
+`silver_native_reply_edges.parquet`, `CODEBOOK.md` e `manifest.json`.
+
+Após a anotação, derive os componentes conectados com:
+
+```powershell
+discord-disentangle derive-annotation-components `
+  --messages data/annotation/neo4j_v1_w100_c200/messages.parquet `
+  --sample-messages data/annotation/neo4j_v1_w100_c200/sample_messages.parquet `
+  --annotations data/annotation/neo4j_v1_w100_c200/annotations.parquet `
+  --source-statuses data/annotation/neo4j_v1_w100_c200/source_statuses.parquet `
+  --output data/processed/disentanglement_experiments/neo4j_human_gold
+```
+
+As respostas explícitas continuam sendo evidência *silver*; somente as arestas
+humanas podem formar o gold standard final. `no_reply`, `outside_context` e
+`ambiguous` não significam, por si, o início de uma nova conversa;
+`new_conversation` é explícito e só vira self-link na materialização.
+
+O procedimento e os valores permitidos estão em
+[`ANNOTATION_CODEBOOK.md`](docs/methodology/ANNOTATION_CODEBOOK.md).
 
 Os três módulos anteriores continuam marcados `PILOT_PROXY`; os dois novos são
 `INSPIRED_BY`. Nenhum é reprodução oficial. A avaliação separa geração de

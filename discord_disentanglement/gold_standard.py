@@ -11,40 +11,32 @@ import pandas as pd
 from discord_disentanglement.io import load_discord_export
 
 
-CONVERSATION_COLUMNS: tuple[str, ...] = (
-    "conversation_id",
-    "root_message_id",
-    "guild_id",
-    "guild_name",
-    "channel_id",
-    "channel_name",
-    "start_timestamp",
-    "end_timestamp",
-    "duration_seconds",
-    "message_count",
-    "direct_reply_count",
-    "participant_count",
-    "messages_json",
-    "reply_edges_json",
-)
-
-ANNOTATION_COLUMNS: tuple[str, ...] = (
+ANNOTATION_WINDOW_COLUMNS: tuple[str, ...] = (
     "annotation_id",
-    "conversation_id",
-    "root_message_id",
+    "window_id",
     "guild_id",
     "guild_name",
     "channel_id",
     "channel_name",
-    "start_timestamp",
-    "end_timestamp",
-    "message_count",
-    "direct_reply_count",
+    "context_start_message_id",
+    "context_end_message_id",
+    "first_annotated_message_id",
+    "last_annotated_message_id",
+    "context_start_timestamp",
+    "context_end_timestamp",
+    "annotation_start_timestamp",
+    "annotation_end_timestamp",
+    "context_message_count",
+    "annotated_message_count",
+    "total_message_count",
     "participant_count",
     "messages_json",
-    "reply_edges_json",
-    "reply_edges_valid",
-    "conversation_complete",
+    "native_reply_edges_json",
+    "native_reply_edges_visible_count",
+    "native_reply_targets_outside_window_count",
+    "native_reply_evidence_review",
+    "human_reply_edges_json",
+    "human_reply_source_statuses_json",
     "ambiguity",
     "annotator_id",
     "reviewed_at",
@@ -56,8 +48,7 @@ ANNOTATION_COLUMNS: tuple[str, ...] = (
 class GoldStandardArtifacts:
     filtered_messages_path: Path
     direct_reply_edges_path: Path
-    conversations_path: Path
-    annotation_queue_path: Path
+    annotation_windows_path: Path
     summary_path: Path
 
 
@@ -69,31 +60,41 @@ def export_native_reply_gold_standard(
     guild_name: str | None = None,
     channel_id: str | None = None,
     channel_name: str | None = None,
+    annotated_window_size: int = 100,
+    context_message_count: int = 200,
 ) -> GoldStandardArtifacts:
-    """Export native Discord reply components as human-annotation conversations."""
+    """Export continuous per-channel windows for human conversation annotation."""
+    if annotated_window_size < 1:
+        raise ValueError("annotated_window_size deve ser maior que zero")
+    if context_message_count < 0:
+        raise ValueError("context_message_count nao pode ser negativo")
     rows = load_discord_export(
         input_path,
         guild_id=guild_id,
         guild_name=guild_name,
         channel_id=channel_id,
         channel_name=channel_name,
+        preserve_native_fields=True,
     )
     messages, dropped_rows, duplicate_message_ids = _normalize_messages(rows)
     valid_edges, quality = _valid_direct_reply_edges(messages)
-    conversations, edges = _build_conversations(messages, valid_edges)
+    annotation_windows = _build_annotation_windows(
+        messages,
+        valid_edges,
+        annotated_window_size=annotated_window_size,
+        context_message_count=context_message_count,
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     filtered_messages_path = output_dir / "native_reply_messages.parquet"
     direct_reply_edges_path = output_dir / "native_reply_edges.parquet"
-    conversations_path = output_dir / "native_reply_conversations.parquet"
-    annotation_queue_path = output_dir / "native_reply_annotation_queue.csv"
+    annotation_windows_path = output_dir / "native_reply_annotation_windows.csv"
     summary_path = output_dir / "native_reply_summary.json"
 
     messages.to_parquet(filtered_messages_path, index=False)
-    edges.to_parquet(direct_reply_edges_path, index=False)
-    conversations.to_parquet(conversations_path, index=False)
-    _build_annotation_queue(conversations).to_csv(
-        annotation_queue_path,
+    valid_edges.to_parquet(direct_reply_edges_path, index=False)
+    annotation_windows.to_csv(
+        annotation_windows_path,
         index=False,
         encoding="utf-8",
     )
@@ -107,10 +108,47 @@ def export_native_reply_gold_standard(
                     "channel_id": channel_id,
                     "channel_name": channel_name,
                 },
+                "annotation_unit": "continuous_channel_window",
+                "annotated_window_size": annotated_window_size,
+                "context_message_count": context_message_count,
+                "annotation_contract": {
+                    "reply_sources": "Only messages with window_role=annotated require a reply annotation.",
+                    "eligible_antecedents": "Any chronologically prior visible message, including window_role=context, may be selected as a parent.",
+                    "outside_context": "Use parent_location=outside_context when the parent plausibly predates the visible context; do not infer a new conversation from a missing visible parent.",
+                    "parent_location_values": [
+                        "context",
+                        "annotated",
+                        "no_reply",
+                        "outside_context",
+                        "ambiguous",
+                    ],
+                    "native_reply_semantics": "A native_reply_to_message_id is positive observed evidence. A null value is unknown, never a negative semantic reply label.",
+                    "human_annotation_unit": "directed_reply_edges",
+                    "human_conversation_ids": "Derived from connected components after human reply edges are finalized; annotators do not assign conversation_id.",
+                    "human_reply_edge_fields": [
+                        "source_message_id",
+                        "target_message_id",
+                        "target_location",
+                    ],
+                    "human_source_annotation_status_values": [
+                        "pending",
+                        "complete",
+                        "no_reply",
+                        "outside_context",
+                        "ambiguous",
+                        "new_conversation",
+                    ],
+                },
                 "filtered_message_count": int(len(messages)),
                 "dropped_rows_missing_message_id_or_timestamp": dropped_rows,
                 "duplicate_message_ids_discarded": duplicate_message_ids,
-                "conversation_count": int(len(conversations)),
+                "annotation_window_count": int(len(annotation_windows)),
+                "annotated_message_count": int(
+                    annotation_windows["annotated_message_count"].sum()
+                ),
+                "context_messages_included": int(
+                    annotation_windows["context_message_count"].sum()
+                ),
                 **quality,
             },
             ensure_ascii=True,
@@ -123,8 +161,7 @@ def export_native_reply_gold_standard(
     return GoldStandardArtifacts(
         filtered_messages_path=filtered_messages_path,
         direct_reply_edges_path=direct_reply_edges_path,
-        conversations_path=conversations_path,
-        annotation_queue_path=annotation_queue_path,
+        annotation_windows_path=annotation_windows_path,
         summary_path=summary_path,
     )
 
@@ -140,25 +177,45 @@ def _normalize_messages(rows: list[dict[str, Any]]) -> tuple[pd.DataFrame, int, 
             continue
         channel_id = _optional_text(row.get("channel_id"))
         channel_name = _optional_text(row.get("channel_name"))
+        reply_target_message_id = _reply_target_id(row)
         records.append(
             {
                 "message_id": message_id,
                 "guild_id": _optional_text(row.get("guild_id")),
+            "server_id": _optional_text(row.get("guild_id")),
                 "guild_name": _optional_text(row.get("guild_name")),
                 "channel_id": channel_id,
                 "channel_name": channel_name,
                 "channel_key": f"{channel_id or ''}\0{channel_name or ''}",
                 "native_thread_id": _optional_text(row.get("native_thread_id")),
                 "author_id": _optional_text(row.get("author_id")),
+            "author_username": _optional_text(row.get("author_username")),
+            "author_discriminator": _optional_text(row.get("author_discriminator")),
                 "timestamp": timestamp,
+            "edited_timestamp": _optional_text(row.get("edited_timestamp")),
                 "content": str(row.get("content") or ""),
-                "reply_target_message_id": _reply_target_id(row),
+            "reply_target_message_id": reply_target_message_id,
+            "native_reply_to_message_id": reply_target_message_id,
                 "mentions": row.get("mentions") or [],
+            "reactions": row.get("reactions") or [],
                 "attachments": row.get("attachments") or [],
                 "embeds": row.get("embeds") or [],
+            "mention_roles": row.get("mention_roles") or [],
+            "sticker_items": row.get("sticker_items") or [],
                 "is_bot": bool(row.get("is_bot")),
                 "is_webhook": bool(row.get("is_webhook")),
+                "webhook_id": _optional_text(row.get("webhook_id")),
+            "pinned": bool(row.get("pinned")),
+            "mention_everyone": bool(row.get("mention_everyone")),
+            "tts": bool(row.get("tts")),
+            "flags": row.get("flags"),
                 "message_type": _optional_text(row.get("message_type")),
+            "referenced_guild_id": _optional_text(row.get("referenced_guild_id")),
+                "native_available_fields_json": row.get(
+                    "native_available_fields_json",
+                    "[]",
+                ),
+            "native_fields_json": row.get("native_fields_json", "{}"),
             }
         )
     messages = pd.DataFrame.from_records(records)
@@ -195,7 +252,7 @@ def _valid_direct_reply_edges(messages: pd.DataFrame) -> tuple[pd.DataFrame, dic
     cross_channel = 0
     non_past_target = 0
     for source in messages.itertuples(index=False):
-        target_id = source.reply_target_message_id
+        target_id = _optional_text(source.reply_target_message_id)
         if target_id is None:
             continue
         raw_count += 1
@@ -229,115 +286,166 @@ def _valid_direct_reply_edges(messages: pd.DataFrame) -> tuple[pd.DataFrame, dic
     }
 
 
-def _build_conversations(
+def _build_annotation_windows(
     messages: pd.DataFrame,
     valid_edges: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if valid_edges.empty:
-        return pd.DataFrame(columns=CONVERSATION_COLUMNS), valid_edges.copy()
+    *,
+    annotated_window_size: int,
+    context_message_count: int,
+) -> pd.DataFrame:
+    """Partition each channel into fixed, continuous annotated windows.
 
-    parent_by_message = dict(
-        zip(
-            valid_edges["source_message_id"].astype(str),
-            valid_edges["target_message_id"].astype(str),
-            strict=False,
-        )
-    )
-    root_by_message: dict[str, str] = {}
+    Direct replies are evidence within a window, never a criterion for its
+    boundaries. Annotated windows are non-overlapping; their preceding context
+    may overlap with the annotation span of an earlier window.
+    """
+    if messages.empty:
+        return pd.DataFrame(columns=ANNOTATION_WINDOW_COLUMNS)
 
-    def root_for(message_id: str) -> str:
-        if message_id in root_by_message:
-            return root_by_message[message_id]
-        path: list[str] = []
-        current = message_id
-        while current in parent_by_message:
-            path.append(current)
-            current = parent_by_message[current]
-        for visited in path:
-            root_by_message[visited] = current
-        root_by_message.setdefault(current, current)
-        return current
-
-    component_message_ids = set(valid_edges["source_message_id"]).union(
-        valid_edges["target_message_id"]
-    )
-    component_messages = messages[messages["message_id"].isin(component_message_ids)].copy()
-    component_messages["root_message_id"] = component_messages["message_id"].map(root_for)
-    component_messages["conversation_id"] = component_messages.apply(
-        lambda row: _conversation_id(row["channel_key"], row["root_message_id"]),
-        axis=1,
-    )
-    conversation_by_message = component_messages.set_index("message_id")["conversation_id"].to_dict()
-    edges = valid_edges.copy()
-    edges.insert(
-        0,
-        "conversation_id",
-        edges["source_message_id"].map(conversation_by_message),
-    )
-
-    conversation_rows: list[dict[str, Any]] = []
-    for conversation_id, group in component_messages.groupby("conversation_id", sort=False):
-        ordered = group.sort_values(["timestamp", "message_id"], kind="stable")
-        root_message_id = str(ordered["root_message_id"].iloc[0])
-        start_timestamp = ordered["timestamp"].iloc[0]
-        end_timestamp = ordered["timestamp"].iloc[-1]
-        messages_payload = [
-            {
-                "sequence": position,
-                "message_id": row.message_id,
-                "reply_to_message_id": parent_by_message.get(row.message_id),
-                "author_id": row.author_id,
-                "timestamp": row.timestamp.isoformat(),
-                "content": row.content,
-                "mentions": row.mentions,
-                "attachments": row.attachments,
-                "embeds": row.embeds,
-                "is_bot": row.is_bot,
-                "is_webhook": row.is_webhook,
-                "message_type": row.message_type,
+    window_rows: list[dict[str, Any]] = []
+    for channel_key, channel_messages in messages.groupby("channel_key", sort=False):
+        ordered = channel_messages.sort_values(
+            ["timestamp", "message_id"], kind="stable"
+        ).reset_index(drop=True)
+        for annotation_start in range(0, len(ordered), annotated_window_size):
+            annotation_end = min(annotation_start + annotated_window_size, len(ordered))
+            context_start = max(0, annotation_start - context_message_count)
+            context = ordered.iloc[context_start:annotation_start]
+            annotated = ordered.iloc[annotation_start:annotation_end]
+            window = ordered.iloc[context_start:annotation_end]
+            window_message_ids = set(window["message_id"])
+            annotated_message_ids = set(annotated["message_id"])
+            window_id = _window_id(channel_key, str(annotated["message_id"].iloc[0]))
+            visible_edges = valid_edges[
+                valid_edges["source_message_id"].isin(window_message_ids)
+                & valid_edges["target_message_id"].isin(window_message_ids)
+            ].sort_values(["source_timestamp", "source_message_id"], kind="stable")
+            annotated_edges = valid_edges[
+                valid_edges["source_message_id"].isin(annotated_message_ids)
+            ]
+            outside_target_count = int(
+                len(annotated_edges)
+                - annotated_edges["target_message_id"].isin(window_message_ids).sum()
+            )
+            role_by_message_id = {
+                message_id: "annotated" if message_id in annotated_message_ids else "context"
+                for message_id in window_message_ids
             }
-            for position, row in enumerate(ordered.itertuples(index=False), start=1)
-        ]
-        conversation_edges = edges[edges["conversation_id"] == conversation_id]
-        reply_edges_payload = [
-            {
-                "source_message_id": row.source_message_id,
-                "target_message_id": row.target_message_id,
-            }
-            for row in conversation_edges.itertuples(index=False)
-        ]
-        conversation_rows.append(
-            {
-                "conversation_id": conversation_id,
-                "root_message_id": root_message_id,
-                "guild_id": ordered["guild_id"].iloc[0],
-                "guild_name": ordered["guild_name"].iloc[0],
-                "channel_id": ordered["channel_id"].iloc[0],
-                "channel_name": ordered["channel_name"].iloc[0],
-                "start_timestamp": start_timestamp,
-                "end_timestamp": end_timestamp,
-                "duration_seconds": float((end_timestamp - start_timestamp).total_seconds()),
-                "message_count": int(len(ordered)),
-                "direct_reply_count": int(len(conversation_edges)),
-                "participant_count": int(ordered["author_id"].nunique()),
-                "messages_json": json.dumps(messages_payload, ensure_ascii=True, default=str),
-                "reply_edges_json": json.dumps(reply_edges_payload, ensure_ascii=True),
-            }
-        )
-    conversations = pd.DataFrame.from_records(conversation_rows, columns=CONVERSATION_COLUMNS)
-    return conversations, edges
+            native_reply_by_message_id = ordered.set_index("message_id")[
+                "native_reply_to_message_id"
+            ].to_dict()
+            messages_payload = [
+                {
+                    "sequence": position,
+                    "window_role": role_by_message_id[row.message_id],
+                    "requires_reply_annotation": row.message_id in annotated_message_ids,
+                    "eligible_as_antecedent_for_later_target": position < len(window),
+                    "message_id": row.message_id,
+                    "server_id": _optional_text(row.server_id),
+                    "channel_id": _optional_text(row.channel_id),
+                    "channel_name": _optional_text(row.channel_name),
+                    "native_reply_to_message_id": _optional_text(
+                        row.native_reply_to_message_id
+                    ),
+                    "native_reply_evidence": _native_reply_evidence(
+                        row.native_reply_to_message_id
+                    ),
+                    "author_id": _optional_text(row.author_id),
+                    "author_username": _optional_text(row.author_username),
+                    "author_discriminator": _optional_text(row.author_discriminator),
+                    "timestamp": row.timestamp.isoformat(),
+                    "edited_timestamp": _optional_text(row.edited_timestamp),
+                    "content": row.content,
+                    "mentions": row.mentions,
+                    "reactions": row.reactions,
+                    "attachments": row.attachments,
+                    "embeds": row.embeds,
+                    "mention_roles": row.mention_roles,
+                    "sticker_items": row.sticker_items,
+                    "is_bot": row.is_bot,
+                    "is_webhook": row.is_webhook,
+                    "webhook_id": _optional_text(row.webhook_id),
+                    "pinned": row.pinned,
+                    "mention_everyone": row.mention_everyone,
+                    "tts": row.tts,
+                    "flags": _optional_int(row.flags),
+                    "message_type": _optional_text(row.message_type),
+                    "native_thread_id": _optional_text(row.native_thread_id),
+                    "referenced_guild_id": _optional_text(row.referenced_guild_id),
+                    "native_available_fields": json.loads(
+                        row.native_available_fields_json
+                    ),
+                    "native_fields_json": row.native_fields_json,
+                }
+                for position, row in enumerate(window.itertuples(index=False), start=1)
+            ]
+            edges_payload = [
+                {
+                    "source_message_id": row.source_message_id,
+                    "target_message_id": row.target_message_id,
+                    "source_role": role_by_message_id[row.source_message_id],
+                    "target_role": role_by_message_id[row.target_message_id],
+                }
+                for row in visible_edges.itertuples(index=False)
+            ]
+            source_annotation_statuses = [
+                {
+                    "source_message_id": message_id,
+                    "native_reply_to_message_id": _optional_text(
+                        native_reply_by_message_id[message_id]
+                    ),
+                    "native_reply_evidence": _native_reply_evidence(
+                        native_reply_by_message_id[message_id]
+                    ),
+                    "source_annotation_status": "pending",
+                }
+                for message_id in annotated["message_id"]
+            ]
+            window_rows.append(
+                {
+                    "annotation_id": window_id,
+                    "window_id": window_id,
+                    "guild_id": annotated["guild_id"].iloc[0],
+                    "guild_name": annotated["guild_name"].iloc[0],
+                    "channel_id": annotated["channel_id"].iloc[0],
+                    "channel_name": annotated["channel_name"].iloc[0],
+                    "context_start_message_id": _first_or_none(context, "message_id"),
+                    "context_end_message_id": _last_or_none(context, "message_id"),
+                    "first_annotated_message_id": annotated["message_id"].iloc[0],
+                    "last_annotated_message_id": annotated["message_id"].iloc[-1],
+                    "context_start_timestamp": _first_or_none(context, "timestamp"),
+                    "context_end_timestamp": _last_or_none(context, "timestamp"),
+                    "annotation_start_timestamp": annotated["timestamp"].iloc[0],
+                    "annotation_end_timestamp": annotated["timestamp"].iloc[-1],
+                    "context_message_count": int(len(context)),
+                    "annotated_message_count": int(len(annotated)),
+                    "total_message_count": int(len(window)),
+                    "participant_count": int(window["author_id"].nunique()),
+                    "messages_json": json.dumps(messages_payload, ensure_ascii=True, default=str),
+                    "native_reply_edges_json": json.dumps(edges_payload, ensure_ascii=True),
+                    "native_reply_edges_visible_count": int(len(visible_edges)),
+                    "native_reply_targets_outside_window_count": outside_target_count,
+                    "native_reply_evidence_review": "pending",
+                    "human_reply_edges_json": "[]",
+                    "human_reply_source_statuses_json": json.dumps(
+                        source_annotation_statuses,
+                        ensure_ascii=True,
+                    ),
+                    "ambiguity": "pending",
+                    "annotator_id": "",
+                    "reviewed_at": "",
+                    "notes": "",
+                }
+            )
+    return pd.DataFrame.from_records(window_rows, columns=ANNOTATION_WINDOW_COLUMNS)
 
 
-def _build_annotation_queue(conversations: pd.DataFrame) -> pd.DataFrame:
-    queue = conversations.copy()
-    queue.insert(0, "annotation_id", queue["conversation_id"])
-    queue["reply_edges_valid"] = "pending"
-    queue["conversation_complete"] = "pending"
-    queue["ambiguity"] = "pending"
-    queue["annotator_id"] = ""
-    queue["reviewed_at"] = ""
-    queue["notes"] = ""
-    return queue.reindex(columns=ANNOTATION_COLUMNS)
+def _first_or_none(frame: pd.DataFrame, column: str) -> Any | None:
+    return None if frame.empty else frame[column].iloc[0]
+
+
+def _last_or_none(frame: pd.DataFrame, column: str) -> Any | None:
+    return None if frame.empty else frame[column].iloc[-1]
 
 
 def _reply_target_id(row: dict[str, Any]) -> str | None:
@@ -361,6 +469,16 @@ def _optional_text(value: Any) -> str | None:
     return text or None
 
 
-def _conversation_id(channel_key: str, root_message_id: str) -> str:
-    identifier = f"{channel_key}\0{root_message_id}".encode("utf-8")
-    return f"NATIVE_{hashlib.sha1(identifier).hexdigest()[:12]}"
+def _native_reply_evidence(value: Any) -> str:
+    return "positive_observed" if _optional_text(value) is not None else "unknown"
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or pd.isna(value):
+        return None
+    return int(value)
+
+
+def _window_id(channel_key: str, first_annotated_message_id: str) -> str:
+    identifier = f"{channel_key}\0{first_annotated_message_id}".encode("utf-8")
+    return f"WINDOW_{hashlib.sha1(identifier).hexdigest()[:12]}"

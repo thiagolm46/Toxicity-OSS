@@ -64,6 +64,37 @@ sem direct_reply   = relação desconhecida
 silver component   != conversa gold completa
 ```
 
+### 4.1 Unidade para anotação humana
+
+O gold standard conversacional não deve começar pela seleção de componentes
+silver, pois eles não informam onde uma conversa começa ou termina. A unidade de
+amostragem é uma janela contínua de mensagens de um canal. Cada janela possui um
+trecho anotado consecutivo e um contexto imediatamente anterior, ambos ordenados
+por `(timestamp, message_id)`.
+
+No primeiro piloto, `annotated_window_size=100` e `context_message_count=200`
+são parâmetros experimentais, não valores metodológicos finais. O contexto
+permite avaliar a possibilidade de a primeira mensagem anotada responder a uma
+mensagem anterior à janela. Quando o pai de um `direct_reply` válido fica antes
+do contexto disponível, a situação é registrada, mas não é convertida em início
+de conversa nem em rótulo negativo.
+
+As janelas anotadas de um mesmo canal não se sobrepõem. O contexto pode se
+sobrepor à janela anotada imediatamente anterior. A anotação humana registra
+arestas `reply_to` e ambiguidade dentro do trecho anotado, nunca um
+`conversation_id` diretamente. Cada fonte anotada pode ter zero, uma ou várias
+arestas para mensagens cronologicamente anteriores visíveis, inclusive as de
+contexto. Após a revisão, componentes conexos dessas arestas derivam os IDs de
+conversa. `no_reply`, `outside_context` e `ambiguous` não devem ser convertidos
+automaticamente em início de conversa. `direct_reply` permanece uma fonte de
+evidência silver separada.
+
+O codebook formal para a anotação está em
+[`ANNOTATION_CODEBOOK.md`](ANNOTATION_CODEBOOK.md). Ele proíbe converter a
+ausência de `native_reply_to_message_id` em rótulo negativo e mantém os
+metadados nativos disponíveis fora do conjunto de features até avaliação
+experimental específica.
+
 ## 5. Projeção das conversas previstas
 
 Clusters previstos podem conter mensagens sem anotação explícita. Penalizá-las

@@ -23,9 +23,11 @@ MESSAGE_SCHEMA = pa.schema(
         pa.field("author_id", pa.string()),
         pa.field("author_username", pa.string()),
         pa.field("author_discriminator", pa.string()),
+        pa.field("webhook_id", pa.string()),
         pa.field("timestamp", pa.string()),
         pa.field("edited_timestamp", pa.string()),
         pa.field("message_type", pa.int64()),
+        pa.field("native_thread_id", pa.string()),
         pa.field("content", pa.string()),
         pa.field("content_length", pa.int64()),
         pa.field("is_bot", pa.bool_()),
@@ -38,6 +40,7 @@ MESSAGE_SCHEMA = pa.schema(
         pa.field("mention_count", pa.int64()),
         pa.field("mention_role_count", pa.int64()),
         pa.field("sticker_count", pa.int64()),
+        pa.field("reaction_count", pa.int64()),
         pa.field("referenced_message_id", pa.string()),
         pa.field("referenced_guild_id", pa.string()),
         pa.field("attachments_json", pa.string()),
@@ -45,6 +48,7 @@ MESSAGE_SCHEMA = pa.schema(
         pa.field("mentions_json", pa.string()),
         pa.field("mention_roles_json", pa.string()),
         pa.field("sticker_items_json", pa.string()),
+        pa.field("reactions_json", pa.string()),
         pa.field("positive_score", pa.int64()),
         pa.field("matched_positive_terms", pa.string()),
     ]
@@ -150,7 +154,9 @@ def transform_message(
     mentions = message.get("mentions") or []
     mention_roles = message.get("mention_roles") or []
     stickers = message.get("sticker_items") or []
+    reactions = message.get("reactions") or []
     reference = message.get("message_reference") or {}
+    thread = message.get("thread") or {}
     guild = guild_lookup[guild_id]
     content = message.get("content") or ""
     return {
@@ -162,9 +168,11 @@ def transform_message(
         "author_id": _optional_string(author.get("id")),
         "author_username": _optional_string(author.get("username")),
         "author_discriminator": _optional_string(author.get("discriminator")),
+        "webhook_id": _optional_string(message.get("webhook_id")),
         "timestamp": _optional_string(message.get("timestamp")),
         "edited_timestamp": _optional_string(message.get("edited_timestamp")),
         "message_type": _optional_int(message.get("type")),
+        "native_thread_id": _optional_string(message.get("thread_id") or thread.get("id")),
         "content": content,
         "content_length": len(content),
         "is_bot": bool(message.get("is_bot") or author.get("bot", False)),
@@ -177,6 +185,7 @@ def transform_message(
         "mention_count": len(mentions),
         "mention_role_count": len(mention_roles),
         "sticker_count": len(stickers),
+        "reaction_count": len(reactions),
         "referenced_message_id": _optional_string(reference.get("message_id")),
         "referenced_guild_id": _optional_string(reference.get("guild_id")),
         "attachments_json": _json(attachments),
@@ -184,6 +193,7 @@ def transform_message(
         "mentions_json": _json(mentions),
         "mention_roles_json": _json(mention_roles),
         "sticker_items_json": _json(stickers),
+        "reactions_json": _json(reactions),
         "positive_score": _optional_int(guild.get("positive_score")),
         "matched_positive_terms": _optional_string(guild.get("matched_positive_terms")),
     }

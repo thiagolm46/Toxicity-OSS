@@ -9,10 +9,16 @@ import pytest
 
 from discord_disentanglement.approaches import APPROACH_IDS, ApproachFitData, create_approach
 from discord_disentanglement.approaches.base import FORBIDDEN_PREDICTION_COLUMNS
+from discord_disentanglement.annotation_bundle import (
+    build_annotation_bundle,
+    materialize_annotation_tables,
+    publish_annotation_dataset,
+)
 from discord_disentanglement.experiments.__main__ import build_parser
 from discord_disentanglement.experiments import ExperimentConfig, run_all, run_experiment
 from discord_disentanglement.experiments.data import PreparedExperiment, prepare_experiment
 from discord_disentanglement.gold_standard import export_native_reply_gold_standard
+from discord_disentanglement.human_annotations import materialize_human_reply_components
 from discord_disentanglement.ui.data import ExperimentRepository
 
 
@@ -116,7 +122,7 @@ def test_preparation_preserves_message_content_without_redaction(tmp_path: Path)
     assert prepared.messages.loc[0, "content_normalized"] == original_content
 
 
-def test_native_reply_gold_standard_keeps_reply_fan_out_in_one_conversation(
+def test_native_reply_gold_standard_builds_continuous_windows_with_context(
     tmp_path: Path,
 ) -> None:
     input_path = tmp_path / "messages.parquet"
@@ -131,6 +137,11 @@ def test_native_reply_gold_standard_keeps_reply_fan_out_in_one_conversation(
             "author_id": "user-1",
             "timestamp": timestamp,
             "content": "How do I write this query?",
+            "reactions_json": '[{"emoji":"thumbsup","count":2}]',
+            "pinned": True,
+            "flags": 64,
+            "webhook_id": "webhook-1",
+            "native_thread_id": None,
         },
         {
             "guild_id": GUILD_ID,
@@ -215,12 +226,13 @@ def test_native_reply_gold_standard_keeps_reply_fan_out_in_one_conversation(
         input_path,
         tmp_path / "gold",
         guild_id=GUILD_ID,
+        annotated_window_size=3,
+        context_message_count=2,
     )
 
     messages = pd.read_parquet(artifacts.filtered_messages_path)
     edges = pd.read_parquet(artifacts.direct_reply_edges_path)
-    conversations = pd.read_parquet(artifacts.conversations_path)
-    annotation_queue = pd.read_csv(artifacts.annotation_queue_path, keep_default_na=False)
+    windows = pd.read_csv(artifacts.annotation_windows_path, keep_default_na=False)
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert len(messages) == 7
     assert edges[["source_message_id", "target_message_id"]].values.tolist() == [
@@ -228,17 +240,426 @@ def test_native_reply_gold_standard_keeps_reply_fan_out_in_one_conversation(
         ["m3", "m1"],
         ["m4", "m2"],
     ]
-    assert conversations["root_message_id"].tolist() == ["m1"]
-    assert conversations["message_count"].tolist() == [4]
-    payload = json.loads(conversations.loc[0, "messages_json"])
-    assert [message["message_id"] for message in payload] == ["m1", "m2", "m3", "m4"]
-    assert [message["reply_to_message_id"] for message in payload] == [None, "m1", "m1", "m2"]
-    assert annotation_queue["conversation_id"].tolist() == conversations["conversation_id"].tolist()
-    assert annotation_queue["reply_edges_valid"].tolist() == ["pending"]
-    assert annotation_queue["conversation_complete"].tolist() == ["pending"]
-    assert annotation_queue["ambiguity"].tolist() == ["pending"]
+    help_windows = windows[windows["channel_name"] == "help"].reset_index(drop=True)
+    assert help_windows["annotated_message_count"].tolist() == [3, 3]
+    assert help_windows["context_message_count"].tolist() == [0, 2]
+    assert help_windows["total_message_count"].tolist() == [3, 5]
+    assert help_windows["first_annotated_message_id"].tolist() == ["non-past", "m3"]
+    payload = json.loads(help_windows.loc[1, "messages_json"])
+    assert [message["message_id"] for message in payload] == [
+        "m1",
+        "m2",
+        "m3",
+        "m4",
+        "standalone",
+    ]
+    assert [message["window_role"] for message in payload] == [
+        "context",
+        "context",
+        "annotated",
+        "annotated",
+        "annotated",
+    ]
+    assert [message["requires_reply_annotation"] for message in payload] == [
+        False,
+        False,
+        True,
+        True,
+        True,
+    ]
+    assert payload[0]["reactions"] == [{"emoji": "thumbsup", "count": 2}]
+    assert payload[0]["pinned"] is True
+    assert payload[0]["flags"] == 64
+    assert payload[0]["webhook_id"] == "webhook-1"
+    assert payload[0]["native_thread_id"] is None
+    assert payload[0]["native_reply_evidence"] == "unknown"
+    assert payload[2]["native_reply_evidence"] == "positive_observed"
+    assert "reactions_json" in payload[0]["native_available_fields"]
+    assert "native_thread_id" in payload[0]["native_available_fields"]
+    assert "reactions_json" in json.loads(payload[0]["native_fields_json"])
+    assert json.loads(payload[0]["native_fields_json"])["native_thread_id"] is None
+    assert [message["eligible_as_antecedent_for_later_target"] for message in payload] == [
+        True,
+        True,
+        True,
+        True,
+        False,
+    ]
+    assert json.loads(help_windows.loc[1, "native_reply_edges_json"]) == [
+        {
+            "source_message_id": "m2",
+            "target_message_id": "m1",
+            "source_role": "context",
+            "target_role": "context",
+        },
+        {
+            "source_message_id": "m3",
+            "target_message_id": "m1",
+            "source_role": "annotated",
+            "target_role": "context",
+        },
+        {
+            "source_message_id": "m4",
+            "target_message_id": "m2",
+            "source_role": "annotated",
+            "target_role": "context",
+        },
+    ]
+    assert json.loads(help_windows.loc[1, "human_reply_edges_json"]) == []
+    source_statuses = json.loads(
+        help_windows.loc[1, "human_reply_source_statuses_json"]
+    )
+    assert source_statuses == [
+        {
+            "source_message_id": "m3",
+            "native_reply_to_message_id": "m1",
+            "native_reply_evidence": "positive_observed",
+            "source_annotation_status": "pending",
+        },
+        {
+            "source_message_id": "m4",
+            "native_reply_to_message_id": "m2",
+            "native_reply_evidence": "positive_observed",
+            "source_annotation_status": "pending",
+        },
+        {
+            "source_message_id": "standalone",
+            "native_reply_to_message_id": None,
+            "native_reply_evidence": "unknown",
+            "source_annotation_status": "pending",
+        },
+    ]
+    assert all("parent_message_id" not in status for status in source_statuses)
+    assert "human_reply_to_json" not in windows.columns
+    assert "human_conversation_labels_json" not in windows.columns
+    assert help_windows["native_reply_evidence_review"].tolist() == ["pending", "pending"]
+    assert help_windows["ambiguity"].tolist() == ["pending", "pending"]
+    assert summary["annotation_unit"] == "continuous_channel_window"
+    assert summary["annotated_window_size"] == 3
+    assert summary["context_message_count"] == 2
+    assert summary["annotation_window_count"] == 3
+    assert "new_conversation" in summary["annotation_contract"][
+        "human_source_annotation_status_values"
+    ]
+    assert summary["direct_reply_references_raw"] == 5
+    assert summary["direct_reply_target_missing_from_scope"] == 0
     assert summary["direct_reply_cross_channel_excluded"] == 1
     assert summary["direct_reply_non_past_excluded"] == 1
+
+
+def test_human_reply_edges_allow_multiple_antecedents_and_derive_components(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "messages.parquet"
+    timestamp = pd.Timestamp("2026-01-01T00:00:00Z")
+    rows = [
+        {
+            "guild_id": GUILD_ID,
+            "guild_name": "Neo4j",
+            "message_id": message_id,
+            "channel_id": "help",
+            "channel_name": "help",
+            "author_id": f"user-{position}",
+            "timestamp": timestamp + pd.Timedelta(minutes=position),
+            "content": f"message {position}",
+        }
+        for position, message_id in enumerate(("m1", "m2", "m3", "m4", "m5"))
+    ]
+    pd.DataFrame.from_records(rows).to_parquet(input_path, index=False)
+    artifacts = export_native_reply_gold_standard(
+        input_path,
+        tmp_path / "windows",
+        guild_id=GUILD_ID,
+        annotated_window_size=3,
+        context_message_count=2,
+    )
+    windows = pd.read_csv(artifacts.annotation_windows_path, keep_default_na=False)
+    window_index = windows.index[windows["first_annotated_message_id"] == "m4"][0]
+    statuses = json.loads(windows.loc[window_index, "human_reply_source_statuses_json"])
+    windows.loc[window_index, "human_reply_source_statuses_json"] = json.dumps(
+        [
+            {**status, "source_annotation_status": "complete"}
+            for status in statuses
+        ]
+    )
+    windows.loc[window_index, "human_reply_edges_json"] = json.dumps(
+        [
+            {
+                "source_message_id": "m4",
+                "target_message_id": "m2",
+                "target_location": "context",
+            },
+            {
+                "source_message_id": "m4",
+                "target_message_id": "m3",
+                "target_location": "context",
+            },
+            {
+                "source_message_id": "m5",
+                "target_message_id": "m4",
+                "target_location": "annotated",
+            },
+        ]
+    )
+    windows.to_csv(artifacts.annotation_windows_path, index=False, encoding="utf-8")
+
+    human = materialize_human_reply_components(
+        artifacts.annotation_windows_path,
+        tmp_path / "human",
+    )
+
+    edges = pd.read_parquet(human.human_reply_edges_path)
+    components = pd.read_parquet(human.human_components_path)
+    summary = json.loads(human.summary_path.read_text(encoding="utf-8"))
+    assert edges[["source_message_id", "target_message_id"]].values.tolist() == [
+        ["m4", "m2"],
+        ["m4", "m3"],
+        ["m5", "m4"],
+    ]
+    assert components["message_id"].tolist() == ["m2", "m3", "m4", "m5"]
+    assert components["conversation_id"].nunique() == 1
+    assert components["component_message_count"].tolist() == [4, 4, 4, 4]
+    assert summary["annotation_unit"] == "directed_reply_edges"
+    assert summary["conversation_id_rule"] == (
+        "undirected_connected_components_of_human_reply_edges"
+    )
+
+
+def test_annotation_bundle_flattens_samples_and_keeps_edge_table_empty(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "messages.parquet"
+    timestamp = pd.Timestamp("2026-01-01T00:00:00Z")
+    rows = [
+        {
+            "guild_id": GUILD_ID,
+            "guild_name": "Neo4j",
+            "message_id": f"m{position}",
+            "channel_id": "help",
+            "channel_name": "help",
+            "author_id": f"user-{position}",
+            "timestamp": timestamp + pd.Timedelta(minutes=position),
+            "content": f"message {position}",
+            "reactions_json": "[]",
+        }
+        for position in range(1, 6)
+    ]
+    pd.DataFrame.from_records(rows).to_parquet(input_path, index=False)
+    windows = export_native_reply_gold_standard(
+        input_path,
+        tmp_path / "windows",
+        guild_id=GUILD_ID,
+        annotated_window_size=3,
+        context_message_count=2,
+    )
+    window_frame = pd.read_csv(windows.annotation_windows_path, keep_default_na=False)
+    window_frame["messages_json"] = window_frame["messages_json"].map(
+        lambda value: json.dumps(
+            [
+                {
+                    key: item
+                    for key, item in message.items()
+                    if key not in {"server_id", "channel_id", "channel_name"}
+                }
+                for message in json.loads(value)
+            ]
+        )
+    )
+    window_frame.to_csv(windows.annotation_windows_path, index=False, encoding="utf-8")
+
+    bundle = build_annotation_bundle(windows.annotation_windows_path, tmp_path / "bundle")
+
+    messages = pd.read_parquet(bundle.messages_path)
+    sample_messages = pd.read_parquet(bundle.sample_messages_path)
+    annotations = pd.read_parquet(bundle.annotations_path)
+    source_statuses = pd.read_parquet(bundle.source_statuses_path)
+    summary = json.loads(bundle.summary_path.read_text(encoding="utf-8"))
+    assert set(
+        {
+            "message_id",
+            "server_id",
+            "channel_id",
+            "author_id",
+            "timestamp",
+            "content",
+            "native_reply_to",
+            "mentions",
+            "message_type",
+            "reaction_count",
+            "has_attachment",
+            "is_bot",
+        }
+    ).issubset(messages.columns)
+    assert set(sample_messages.columns) == {
+        "sample_id",
+        "message_id",
+        "is_context",
+        "sequence",
+    }
+    assert len(annotations) == 0
+    assert set(annotations.columns) == {
+        "sample_id",
+        "source_message_id",
+        "target_message_id",
+        "annotator_id",
+        "relation",
+        "ambiguous",
+        "confidence",
+        "notes",
+    }
+    assert len(messages) == 5
+    assert sample_messages["sample_id"].nunique() == 2
+    assert len(sample_messages) == 7
+    assert int(sample_messages["is_context"].sum()) == 2
+    assert messages["channel_id"].unique().tolist() == ["help"]
+    assert source_statuses["source_status"].unique().tolist() == ["pending"]
+    assert len(source_statuses) == 5
+    assert summary["message_table_unit"] == "canonical_message"
+    assert summary["sample_message_table_unit"] == "sample_message_membership"
+    assert summary["annotation_table_unit"] == "directed_reply_edge"
+
+
+def test_flat_annotation_tables_allow_multiple_edges_and_explicit_new_conversation(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "messages.parquet"
+    timestamp = pd.Timestamp("2026-01-01T00:00:00Z")
+    rows = [
+        {
+            "guild_id": GUILD_ID,
+            "guild_name": "Neo4j",
+            "message_id": f"m{position}",
+            "channel_id": "help",
+            "channel_name": "help",
+            "author_id": f"user-{position}",
+            "timestamp": timestamp + pd.Timedelta(minutes=position),
+            "content": f"message {position}",
+        }
+        for position in range(1, 6)
+    ]
+    pd.DataFrame.from_records(rows).to_parquet(input_path, index=False)
+    windows = export_native_reply_gold_standard(
+        input_path,
+        tmp_path / "windows",
+        guild_id=GUILD_ID,
+        annotated_window_size=3,
+        context_message_count=2,
+    )
+    bundle = build_annotation_bundle(windows.annotation_windows_path, tmp_path / "bundle")
+    messages = pd.read_parquet(bundle.messages_path)
+    sample_messages = pd.read_parquet(bundle.sample_messages_path)
+    annotations = pd.DataFrame(
+        [
+            {
+                "sample_id": sample_messages.loc[
+                    sample_messages["message_id"] == "m4", "sample_id"
+                ].iloc[0],
+                "source_message_id": "m4",
+                "target_message_id": "m2",
+                "annotator_id": "A1",
+                "relation": "reply",
+                "ambiguous": False,
+                "confidence": "high",
+                "notes": "",
+            },
+            {
+                "sample_id": sample_messages.loc[
+                    sample_messages["message_id"] == "m4", "sample_id"
+                ].iloc[0],
+                "source_message_id": "m4",
+                "target_message_id": "m3",
+                "annotator_id": "A1",
+                "relation": "reply",
+                "ambiguous": False,
+                "confidence": "high",
+                "notes": "",
+            },
+        ]
+    )
+    annotations.to_parquet(bundle.annotations_path, index=False)
+    statuses = pd.read_parquet(bundle.source_statuses_path)
+    sample_id = annotations.loc[0, "sample_id"]
+    statuses.loc[
+        (statuses["sample_id"] == sample_id) & (statuses["source_message_id"] == "m4"),
+        ["annotator_id", "source_status", "confidence"],
+    ] = ["A1", "complete", "high"]
+    statuses.loc[
+        (statuses["sample_id"] == sample_id) & (statuses["source_message_id"] == "m5"),
+        ["annotator_id", "source_status", "confidence"],
+    ] = ["A1", "new_conversation", "high"]
+    statuses.to_parquet(bundle.source_statuses_path, index=False)
+
+    materialized = materialize_annotation_tables(
+        bundle.messages_path,
+        bundle.sample_messages_path,
+        bundle.annotations_path,
+        bundle.source_statuses_path,
+        tmp_path / "gold",
+    )
+
+    edges = pd.read_parquet(materialized.edges_path)
+    components = pd.read_parquet(materialized.components_path)
+    summary = json.loads(materialized.summary_path.read_text(encoding="utf-8"))
+    assert edges[["source_message_id", "target_message_id", "relation"]].values.tolist() == [
+        ["m4", "m2", "reply"],
+        ["m4", "m3", "reply"],
+        ["m5", "m5", "new_conversation"],
+    ]
+    assert components.groupby("conversation_id")["message_id"].apply(list).tolist() == [
+        ["m2", "m3", "m4"],
+        ["m5"],
+    ]
+    assert summary["reply_edges_submitted"] == 2
+    assert summary["new_conversation_self_links"] == 1
+
+
+def test_publish_annotation_dataset_keeps_only_required_artifacts(tmp_path: Path) -> None:
+    input_path = tmp_path / "messages.parquet"
+    pd.DataFrame.from_records(
+        [
+            {
+                "guild_id": GUILD_ID,
+                "guild_name": "Neo4j",
+                "message_id": "m1",
+                "channel_id": "help",
+                "channel_name": "help",
+                "author_id": "user-1",
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "content": "message",
+            }
+        ]
+    ).to_parquet(input_path, index=False)
+    windows = export_native_reply_gold_standard(
+        input_path,
+        tmp_path / "windows",
+        guild_id=GUILD_ID,
+        annotated_window_size=1,
+        context_message_count=0,
+    )
+    bundle = build_annotation_bundle(windows.annotation_windows_path, tmp_path / "bundle")
+    codebook_path = tmp_path / "CODEBOOK.md"
+    codebook_path.write_text("# Codebook\n", encoding="utf-8")
+
+    published = publish_annotation_dataset(
+        tmp_path / "bundle",
+        windows.direct_reply_edges_path,
+        codebook_path,
+        tmp_path / "published",
+    )
+
+    assert {path.name for path in (tmp_path / "published").iterdir()} == {
+        "messages.parquet",
+        "sample_messages.parquet",
+        "annotations.parquet",
+        "source_statuses.parquet",
+        "silver_native_reply_edges.parquet",
+        "CODEBOOK.md",
+        "manifest.json",
+    }
+    manifest = json.loads(published.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["counts"]["unique_message_count"] == 1
+    assert manifest["counts"]["human_annotation_edge_count"] == 0
+    assert published.codebook_path.read_text(encoding="utf-8") == "# Codebook\n"
 
 
 def test_gold_standard_cli_defaults_to_neo4j_scope(tmp_path: Path) -> None:
@@ -254,6 +675,76 @@ def test_gold_standard_cli_defaults_to_neo4j_scope(tmp_path: Path) -> None:
 
     assert args.guild_id == GUILD_ID
     assert args.channel_id is None
+    assert args.annotated_window_size == 100
+    assert args.context_message_count == 200
+
+
+def test_derive_human_components_cli_requires_paths(tmp_path: Path) -> None:
+    args = build_parser().parse_args(
+        [
+            "derive-human-components",
+            "--annotation-windows",
+            str(tmp_path / "windows.csv"),
+            "--output",
+            str(tmp_path / "human"),
+        ]
+    )
+
+    assert args.annotation_windows == tmp_path / "windows.csv"
+    assert args.output == tmp_path / "human"
+
+
+def test_flat_annotation_bundle_cli_requires_all_table_paths(tmp_path: Path) -> None:
+    bundle_args = build_parser().parse_args(
+        [
+            "build-annotation-bundle",
+            "--annotation-windows",
+            str(tmp_path / "windows.csv"),
+            "--output",
+            str(tmp_path / "bundle"),
+        ]
+    )
+    component_args = build_parser().parse_args(
+        [
+            "derive-annotation-components",
+            "--messages",
+            str(tmp_path / "bundle" / "messages.parquet"),
+            "--sample-messages",
+            str(tmp_path / "bundle" / "sample_messages.parquet"),
+            "--annotations",
+            str(tmp_path / "bundle" / "annotations.parquet"),
+            "--source-statuses",
+            str(tmp_path / "bundle" / "source_statuses.parquet"),
+            "--output",
+            str(tmp_path / "gold"),
+            "--include-ambiguous",
+        ]
+    )
+
+    assert bundle_args.annotation_windows == tmp_path / "windows.csv"
+    assert component_args.messages.name == "messages.parquet"
+    assert component_args.sample_messages.name == "sample_messages.parquet"
+    assert component_args.include_ambiguous is True
+
+
+def test_publish_annotation_dataset_cli_requires_sources(tmp_path: Path) -> None:
+    args = build_parser().parse_args(
+        [
+            "publish-annotation-dataset",
+            "--bundle-dir",
+            str(tmp_path / "bundle"),
+            "--native-reply-edges",
+            str(tmp_path / "native_reply_edges.parquet"),
+            "--codebook",
+            str(tmp_path / "CODEBOOK.md"),
+            "--output",
+            str(tmp_path / "dataset"),
+        ]
+    )
+
+    assert args.bundle_dir == tmp_path / "bundle"
+    assert args.native_reply_edges.name == "native_reply_edges.parquet"
+    assert args.codebook.name == "CODEBOOK.md"
 
 
 def test_common_candidates_are_same_channel_strictly_past_and_label_free(

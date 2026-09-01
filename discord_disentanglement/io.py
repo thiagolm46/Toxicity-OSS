@@ -18,13 +18,21 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "channel_name": ("channel_name", "channelName", "Channel Name", "channel"),
     "native_thread_id": ("native_thread_id", "thread_id", "threadId", "Thread ID"),
     "author_id": ("author_id", "authorId", "Author ID", "author.id", "user_id"),
+    "author_username": ("author_username", "authorUsername", "author.username"),
+    "author_discriminator": (
+        "author_discriminator",
+        "authorDiscriminator",
+        "author.discriminator",
+    ),
     "timestamp": ("timestamp", "Date", "date", "created_at", "Timestamp"),
     "edited_timestamp": ("edited_timestamp", "Edited Timestamp", "edited_at"),
     "content": ("content", "Content", "message", "Message"),
     "mentions": ("mentions", "Mentions", "mentions_json"),
     "attachments": ("attachments", "Attachments", "attachments_json"),
     "embeds": ("embeds", "Embeds", "embeds_json"),
-    "reactions": ("reactions", "Reactions"),
+    "reactions": ("reactions", "Reactions", "reactions_json"),
+    "mention_roles": ("mention_roles", "mentionRoles", "mention_roles_json"),
+    "sticker_items": ("sticker_items", "stickerItems", "sticker_items_json"),
     "message_reference": ("message_reference", "messageReference", "reference"),
     "referenced_message": ("referenced_message", "referencedMessage"),
     "reply_to_message_id": (
@@ -34,8 +42,14 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "referenced_message_id",
     ),
     "is_bot": ("is_bot", "isBot", "Is Bot", "author.bot"),
-    "is_webhook": ("is_webhook", "isWebhook", "webhook_id"),
+    "is_webhook": ("is_webhook", "isWebhook"),
+    "webhook_id": ("webhook_id", "webhookId"),
     "message_type": ("message_type", "type", "Type"),
+    "pinned": ("pinned", "Pinned"),
+    "mention_everyone": ("mention_everyone", "mentionEveryone"),
+    "tts": ("tts", "TTS"),
+    "flags": ("flags", "Flags"),
+    "referenced_guild_id": ("referenced_guild_id", "referencedGuildId"),
 }
 
 
@@ -45,20 +59,28 @@ def load_discord_export(
     guild_id: str | None = None,
     channel_name: str | None = None,
     channel_id: str | None = None,
+    preserve_native_fields: bool = False,
 ) -> list[dict[str, Any]]:
     suffix = path.suffix.lower()
     if suffix == ".json":
-        rows = _load_json(path)
+        rows = _load_json(path, preserve_native_fields=preserve_native_fields)
         return filter_rows(rows, guild_name, guild_id, channel_name, channel_id)
     if suffix == ".csv":
-        rows = _load_csv(path)
+        rows = _load_csv(path, preserve_native_fields=preserve_native_fields)
         return filter_rows(rows, guild_name, guild_id, channel_name, channel_id)
     if suffix in {".parquet", ".pq"}:
-        return _load_parquet(path, guild_name, guild_id, channel_name, channel_id)
+        return _load_parquet(
+            path,
+            guild_name,
+            guild_id,
+            channel_name,
+            channel_id,
+            preserve_native_fields=preserve_native_fields,
+        )
     raise ValueError(f"Formato nao suportado: {path.suffix}. Use JSON, CSV ou Parquet.")
 
 
-def _load_json(path: Path) -> list[dict[str, Any]]:
+def _load_json(path: Path, *, preserve_native_fields: bool) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8") as file_handle:
         data = json.load(file_handle)
     rows: list[dict[str, Any]] = []
@@ -73,13 +95,16 @@ def _load_json(path: Path) -> list[dict[str, Any]]:
                     rows.extend(_flatten_message_rows(channel["messages"], parent={**data, **channel}))
         else:
             rows.extend(_flatten_message_rows([data]))
-    return [normalize_row(row) for row in rows]
+    return [normalize_row(row, preserve_native_fields=preserve_native_fields) for row in rows]
 
 
-def _load_csv(path: Path) -> list[dict[str, Any]]:
+def _load_csv(path: Path, *, preserve_native_fields: bool) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8-sig", newline="") as file_handle:
         reader = csv.DictReader(file_handle)
-        return [normalize_row(dict(row)) for row in reader]
+        return [
+            normalize_row(dict(row), preserve_native_fields=preserve_native_fields)
+            for row in reader
+        ]
 
 
 def _load_parquet(
@@ -88,14 +113,21 @@ def _load_parquet(
     guild_id: str | None,
     channel_name: str | None,
     channel_id: str | None,
+    *,
+    preserve_native_fields: bool,
 ) -> list[dict[str, Any]]:
-    available_columns = set(pq.ParquetFile(path).schema.names)
-    columns = [
-        alias
-        for aliases in FIELD_ALIASES.values()
-        for alias in aliases
-        if "." not in alias and alias in available_columns
-    ]
+    schema_columns = pq.ParquetFile(path).schema.names
+    available_columns = set(schema_columns)
+    columns = (
+        schema_columns
+        if preserve_native_fields
+        else [
+            alias
+            for aliases in FIELD_ALIASES.values()
+            for alias in aliases
+            if "." not in alias and alias in available_columns
+        ]
+    )
     filters: list[tuple[str, str, str]] = []
     for column, value in (
         ("guild_id", guild_id),
@@ -122,7 +154,10 @@ def _load_parquet(
         dataframe = dataframe[
             dataframe["channel_name"].astype(str).str.casefold() == channel_name.casefold()
         ]
-    return [normalize_row(row) for row in dataframe.to_dict(orient="records")]
+    return [
+        normalize_row(row, preserve_native_fields=preserve_native_fields)
+        for row in dataframe.to_dict(orient="records")
+    ]
 
 
 def filter_rows(
@@ -174,7 +209,11 @@ def _flatten_message_rows(
     return rows
 
 
-def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
+def normalize_row(
+    row: dict[str, Any],
+    *,
+    preserve_native_fields: bool = False,
+) -> dict[str, Any]:
     normalized: dict[str, Any] = {}
     for canonical, aliases in FIELD_ALIASES.items():
         normalized[canonical] = _first_value(row, aliases)
@@ -182,6 +221,10 @@ def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     author = row.get("author")
     if isinstance(author, dict):
         normalized["author_id"] = normalized["author_id"] or author.get("id")
+        normalized["author_username"] = normalized["author_username"] or author.get("username")
+        normalized["author_discriminator"] = (
+            normalized["author_discriminator"] or author.get("discriminator")
+        )
         normalized["is_bot"] = normalized["is_bot"] if normalized["is_bot"] is not None else author.get("bot")
 
     channel = row.get("channel")
@@ -200,7 +243,11 @@ def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     normalized["channel_name"] = as_str(normalized["channel_name"])
     normalized["native_thread_id"] = as_str(normalized["native_thread_id"])
     normalized["author_id"] = as_str(normalized["author_id"])
+    normalized["author_username"] = as_str(normalized["author_username"])
+    normalized["author_discriminator"] = as_str(normalized["author_discriminator"])
     normalized["reply_to_message_id"] = as_str(normalized["reply_to_message_id"])
+    normalized["referenced_guild_id"] = as_str(normalized["referenced_guild_id"])
+    normalized["webhook_id"] = as_str(normalized["webhook_id"])
     normalized["timestamp"] = parse_timestamp(normalized["timestamp"])
     normalized["edited_timestamp"] = as_str(normalized["edited_timestamp"])
     normalized["content"] = "" if normalized["content"] is None else str(normalized["content"])
@@ -208,10 +255,27 @@ def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     normalized["attachments"] = parse_jsonish(normalized["attachments"], default=[])
     normalized["embeds"] = parse_jsonish(normalized["embeds"], default=[])
     normalized["reactions"] = parse_jsonish(normalized["reactions"], default=[])
+    normalized["mention_roles"] = parse_jsonish(normalized["mention_roles"], default=[])
+    normalized["sticker_items"] = parse_jsonish(normalized["sticker_items"], default=[])
     normalized["message_reference"] = parse_jsonish(normalized["message_reference"], default=None)
     normalized["referenced_message"] = parse_jsonish(normalized["referenced_message"], default=None)
     normalized["is_bot"] = as_bool(normalized["is_bot"])
     normalized["is_webhook"] = as_bool(normalized["is_webhook"])
+    normalized["pinned"] = as_bool(normalized["pinned"])
+    normalized["mention_everyone"] = as_bool(normalized["mention_everyone"])
+    normalized["tts"] = as_bool(normalized["tts"])
+    if preserve_native_fields:
+        normalized["native_available_fields_json"] = json.dumps(
+            sorted(str(key) for key in row),
+            ensure_ascii=True,
+        )
+        normalized["native_fields_json"] = json.dumps(
+            _json_compatible(row),
+            ensure_ascii=True,
+            sort_keys=True,
+            default=str,
+            allow_nan=False,
+        )
     return normalized
 
 
@@ -288,6 +352,14 @@ def is_missing(value: Any) -> bool:
         return bool(pd.isna(value))
     except (TypeError, ValueError):
         return False
+
+
+def _json_compatible(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_compatible(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_compatible(item) for item in value]
+    return None if is_missing(value) else value
 
 
 def _matches_value(actual: Any, expected: str | None) -> bool:
