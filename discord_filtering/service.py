@@ -144,6 +144,9 @@ def _load_message_frame(
         "author_id",
         "author_username",
         "is_bot",
+        "referenced_message_id",
+        "mention_count",
+        "timestamp",
         "content",
     ]
     columns = [column for column in desired if column in schema_names]
@@ -197,6 +200,9 @@ def _score_message_frame(
                 "author_id",
                 "author_username",
                 "is_bot",
+                "referenced_message_id",
+                "mention_count",
+                "timestamp",
                 "content",
             )
             if column in group.columns

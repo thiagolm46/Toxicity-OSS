@@ -78,6 +78,16 @@ class ChannelClassificationPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class ConversationSuitabilityPolicy:
+    min_human_users: int
+    min_interacting_human_users: int
+    min_interaction_ratio: float
+    min_author_transition_ratio: float
+    max_dominant_author_ratio: float
+    max_bot_message_ratio: float
+
+
+@dataclass(frozen=True, slots=True)
 class ChannelPolicy:
     metadata_fields: tuple[str, ...]
     positive_rules: tuple[WeightedRule, ...]
@@ -87,6 +97,7 @@ class ChannelPolicy:
     signals: tuple[ContentSignal, ...]
     component_weights: ComponentWeights
     classification: ChannelClassificationPolicy
+    conversation_suitability: ConversationSuitabilityPolicy
     exclude_bot_messages: bool
     max_evidence_examples: int
     score_field: str
@@ -246,6 +257,18 @@ class ChannelClassification:
     n_messages: int
     n_users: int
     n_bot_messages: int
+    total_messages: int
+    interaction_message_count: int
+    valid_native_reply_message_count: int
+    mention_interaction_message_count: int
+    interacting_human_user_count: int
+    interaction_ratio: float
+    author_transition_ratio: float
+    dominant_author_ratio: float
+    bot_message_ratio: float
+    conversation_score: float
+    conversation_suitable: bool
+    conversation_exclusion_reasons: tuple[str, ...]
     metadata_positive_score: float
     metadata_negative_score: float
     metadata_score: float
@@ -286,6 +309,20 @@ class ChannelClassification:
             "n_messages": self.n_messages,
             "n_users": self.n_users,
             "n_bot_messages": self.n_bot_messages,
+            "total_messages": self.total_messages,
+            "interaction_message_count": self.interaction_message_count,
+            "valid_native_reply_message_count": self.valid_native_reply_message_count,
+            "mention_interaction_message_count": self.mention_interaction_message_count,
+            "interacting_human_user_count": self.interacting_human_user_count,
+            "interaction_ratio": self.interaction_ratio,
+            "author_transition_ratio": self.author_transition_ratio,
+            "dominant_author_ratio": self.dominant_author_ratio,
+            "bot_message_ratio": self.bot_message_ratio,
+            "conversation_score": self.conversation_score,
+            "conversation_suitable": self.conversation_suitable,
+            "conversation_exclusion_reasons": compact_json(
+                list(self.conversation_exclusion_reasons)
+            ),
             "metadata_positive_score": self.metadata_positive_score,
             "metadata_negative_score": self.metadata_negative_score,
             "metadata_score": self.metadata_score,

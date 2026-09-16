@@ -2,10 +2,21 @@
 
 ## Finalidade
 
-Este processo prepara dados do Discord Unveiled para classificacao manual. A
-curadoria ocorre em duas etapas: primeiro seleciona servidores relacionados a
-engenharia de software; depois classifica seus canais em uma escala de
-relevancia. A segunda etapa prioriza a revisao humana, mas nao a substitui.
+Este processo prepara dados do Discord Unveiled para classificacao manual de
+conversas desentrelaçadas. A curadoria possui tres etapas encadeadas:
+
+1. filtrar servidores relacionados a engenharia de software;
+2. filtrar canais relevantes para conversas e interacoes entre usuarios reais;
+3. selecionar intervalos temporais para anotacao manual com cobertura variada
+  e justificativa estatistica.
+
+A etapa 4, posterior aos intervalos selecionados, define e calibra o codebook
+por meio de classificacao piloto. O protocolo de anotacao esta em
+[ANNOTATION_CODEBOOK.md](ANNOTATION_CODEBOOK.md).
+
+Este documento detalha as etapas 1 e 2. A etapa 3 esta especificada em
+[DISENTANGLEMENT_SAMPLING.md](DISENTANGLEMENT_SAMPLING.md). A classificacao de
+canais prioriza a revisao humana, mas nao a substitui.
 
 Neo4j e apenas um exemplo de execucao. O perfil
 [`software.v1.json`](../../configs/filtering/software.v1.json) define regras,
@@ -43,7 +54,7 @@ contem somente registros com `is_selected = true`. Na execucao historica de
 artefatos estao em
 [`discord_unveiled_2026-08-25`](../../data/processed/filtering/software/discord_unveiled_2026-08-25).
 
-## Etapa 2: classificacao de canais
+## Etapa 2: canais relevantes para conversas
 
 As mensagens dos servidores selecionados sao agrupadas por `guild_id` e
 `channel_id`. Cada canal recebe tres componentes, normalizados entre 0 e 1:
@@ -97,12 +108,11 @@ As contribuicoes ponderadas formam $E_l$ e $E_d$. Ate cinco exemplos por
 familia sao preservados com o ID da mensagem, para revisao humana.
 
 Mensagens de bot (`is_bot = true`) sao registradas em `n_bot_messages`, mas
-nao entram na contagem nem nas evidencias do perfil atual. Isso impede que
-avisos e comandos automatizados elevem a classificacao. Ainda nao ha exclusao
-por proporcao de bots; isso pode ser adicionado em uma versao futura voltada a
-canais predominantemente automatizados ou promocionais.
+nao entram na evidencia tecnica do perfil atual. Alem disso, a adequacao
+conversacional usa o volume bruto para calcular `bot_message_ratio`, impedindo
+que um canal dominado por automacao entre automaticamente na fila principal.
 
-## Escala para curadoria manual
+## Escala tecnica e adequacao conversacional
 
 As regras sao aplicadas na seguinte ordem:
 
@@ -110,41 +120,65 @@ As regras sao aplicadas na seguinte ordem:
 | --- | --- | --- |
 | D | Sinal administrativo, bot/log, voz ou spam com pouca evidencia tecnica | Fora da fila inicial. |
 | C | Sinal social com pouca evidencia tecnica, ou escore insuficiente | Baixa prioridade. |
-| A | $S \geq 0{,}70$ e $E_l \geq 0{,}30$ | Alta prioridade; entra na fila principal. |
+| A | $S \geq 0{,}70$ e $E_l \geq 0{,}30$ | Forte relevancia tecnica; requer verificacao conversacional. |
 | B | $S \geq 0{,}50$, ou $E_l \geq 0{,}45$ e $E_d \geq 0{,}20$ | Revisar antes de incluir. |
 
 D e C tem precedencia se houver sinais administrativos ou sociais sem
 evidencia tecnica suficiente. A exige escore alto e conteudo tecnico real. B
 reune canais plausiveis, mas inconclusivos; os demais recebem C.
 
-Por padrao, A define `include_in_main_analysis = true` e B define
-`manual_review_required = true`. O canal tambem precisa ter pelo menos 50
-mensagens nao-bot para `eligibility_status = eligible`. Abaixo disso, escore e
-classe continuam visiveis, mas a inclusao automatica e removida e a revisao se
-torna obrigatoria.
+A-D medem somente relevancia tecnica. A decisao independente
+`conversation_suitable` mede se o canal parece adequado para anotar conversas
+entre usuarios reais. Ela exige simultaneamente pelo
+menos cinco autores humanos, tres autores humanos que tenham interagido, no
+minimo 5% de mensagens humanas com interacao, alternancia de autor em pelo
+menos 20% das transicoes e no maximo 25% de mensagens de bots no volume bruto.
+Uma mensagem e considerada interativa quando possui reply nativo valido para
+uma mensagem humana anterior do canal ou mencao outro usuario
+(`mention_count > 0`). Nenhum autor humano pode concentrar mais de 70% das
+mensagens humanas.
+
+O resultado inclui `interaction_message_count`,
+`valid_native_reply_message_count`, `mention_interaction_message_count`,
+`interacting_human_user_count`, `interaction_ratio`,
+`author_transition_ratio`, `dominant_author_ratio`, `bot_message_ratio`,
+`conversation_score`, `conversation_suitable` e
+`conversation_exclusion_reasons`. Os motivos possiveis sao
+`insufficient_human_users`, `low_interaction`,
+`insufficient_interacting_human_users`, `low_author_turn_taking`,
+`dominant_human_author` e `bot_dominated`.
+
+Somente A com `conversation_suitable = true` define
+`include_in_main_analysis = true`. Um A tecnicamente forte, mas inadequado para
+conversa, passa a requerer revisao manual, assim como B. O canal tambem precisa
+ter pelo menos 50 mensagens nao-bot para `eligibility_status = eligible`.
+Abaixo desse limiar, escore e classe continuam visiveis, mas a inclusao
+automatica e removida e a revisao se torna obrigatoria.
 
 ## Aplicacao na anotacao
 
-Use A como inicio da fila, revise B antes de incluir, e amostre C/D para
-encontrar falsos negativos ou erros sistematicos. Canais com poucos dados sao
-inconclusivos, nao irrelevantes. Para cada decisao humana, registre classe,
+Use A com `conversation_suitable = true` como inicio da fila. Revise A que
+falharem na adequacao e B antes de incluir; amostre C/D para encontrar falsos
+negativos ou erros sistematicos. Canais com poucos dados sao inconclusivos, nao
+irrelevantes. Para cada decisao humana, registre classe tecnica, adequacao,
 escore, componentes, evidencias e decisao final. Essa amostra de referencia
 permite calibrar uma nova versao do perfil de modo mensuravel.
 
 ## Exemplo: Neo4j
 
-Em 1 de setembro de 2026, o exemplo Neo4j pontuou 37 canais com 35.787
-mensagens: 27 elegiveis e 10 com dados insuficientes. A distribuicao foi 9 A,
-11 B, 16 C e 1 D. Os 9 A foram incluidos automaticamente; 20 foram marcados
-para revisao por serem B, terem pouco volume ou ambos.
+O piloto Neo4j foi reexecutado em 16 de setembro de 2026 com o perfil `1.4.0`.
+Foram pontuados 37 canais com 35.787 mensagens: 27 elegiveis e 10 com dados
+insuficientes. A distribuicao tecnica foi 9 A, 11 B, 16 C e 1 D. Os 9 canais A
+tambem atenderam a `conversation_suitable` e foram incluidos automaticamente.
 
 Os resultados estao em
-[`neo4j_channels.parquet`](../../data/processed/filtering/software/discord_unveiled_rich_2026-09-01/neo4j_channels.parquet)
+[`neo4j_channels.parquet`](../../data/processed/filtering/software/neo4j_conversation_pilot_2026-09-16/neo4j_channels.parquet)
 e no
-[`manifesto do exemplo`](../../data/processed/filtering/software/discord_unveiled_rich_2026-09-01/neo4j_channels.parquet.manifest.json).
+[`manifesto do exemplo`](../../data/processed/filtering/software/neo4j_conversation_pilot_2026-09-16/neo4j_channels.parquet.manifest.json).
 Use `channel_score`, `lexical_evidence_score`, `domain_evidence_score`,
-`channel_class`, `eligibility_status`, `include_in_main_analysis` e
-`manual_review_required` para organizar a fila.
+`channel_class`, `conversation_suitable`, `conversation_exclusion_reasons`,
+`eligibility_status`, `include_in_main_analysis` e `manual_review_required`
+para organizar a fila no novo resultado.
 
 ## Reproducao
 

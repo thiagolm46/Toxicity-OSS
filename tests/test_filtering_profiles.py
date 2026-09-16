@@ -130,6 +130,88 @@ class ServerFilteringTests(unittest.TestCase):
 
 
 class ChannelScoringTests(unittest.TestCase):
+    @staticmethod
+    def _technical_messages(
+        *,
+        count: int,
+        interactive: bool,
+        bot: bool = False,
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "message_id": str(index),
+                "author_id": str(index % 5),
+                "is_bot": bot,
+                "timestamp": f"{index:06d}",
+                "referenced_message_id": str(index - 1) if interactive and index else None,
+                "mention_count": 0,
+                "content": (
+                    "pip install package config.py traceback TypeError github.com/org/repo "
+                    "issue branch release open source"
+                ),
+            }
+            for index in range(count)
+        ]
+
+    def test_technical_channel_requires_conversation_evidence_for_inclusion(self) -> None:
+        profile = load_profile(SOFTWARE_PROFILE)
+        broadcast = score_channel(
+            {"guild_id": "1", "channel_id": "10", "channel_name": "release-notes"},
+            profile,
+            messages=self._technical_messages(count=60, interactive=False),
+        )
+        conversation = score_channel(
+            {"guild_id": "1", "channel_id": "11", "channel_name": "development"},
+            profile,
+            messages=self._technical_messages(count=60, interactive=True),
+        )
+
+        self.assertEqual(broadcast.channel_class, "A")
+        self.assertFalse(broadcast.conversation_suitable)
+        self.assertIn("low_interaction", broadcast.conversation_exclusion_reasons)
+        self.assertFalse(broadcast.include_in_main_analysis)
+        self.assertTrue(broadcast.manual_review_required)
+        self.assertEqual(conversation.channel_class, "A")
+        self.assertTrue(conversation.conversation_suitable)
+        self.assertGreater(conversation.valid_native_reply_message_count, 0)
+        self.assertGreater(conversation.author_transition_ratio, 0.2)
+        self.assertTrue(conversation.include_in_main_analysis)
+
+    def test_bot_dominated_channel_is_not_conversation_suitable(self) -> None:
+        profile = load_profile(SOFTWARE_PROFILE)
+        messages = self._technical_messages(count=60, interactive=True)
+        messages.extend(self._technical_messages(count=100, interactive=True, bot=True))
+
+        result = score_channel(
+            {"guild_id": "1", "channel_id": "12", "channel_name": "development"},
+            profile,
+            messages=messages,
+        )
+
+        self.assertEqual(result.channel_class, "A")
+        self.assertEqual(result.n_bot_messages, 100)
+        self.assertGreater(result.bot_message_ratio, 0.5)
+        self.assertFalse(result.conversation_suitable)
+        self.assertIn("bot_dominated", result.conversation_exclusion_reasons)
+        self.assertFalse(result.include_in_main_analysis)
+
+    def test_single_author_dominance_is_not_conversation_suitable(self) -> None:
+        profile = load_profile(SOFTWARE_PROFILE)
+        messages = self._technical_messages(count=60, interactive=True)
+        for index, message in enumerate(messages):
+            message["author_id"] = "0" if index < 48 else str(index - 47)
+
+        result = score_channel(
+            {"guild_id": "1", "channel_id": "13", "channel_name": "development"},
+            profile,
+            messages=messages,
+        )
+
+        self.assertEqual(result.channel_class, "A")
+        self.assertGreater(result.dominant_author_ratio, 0.7)
+        self.assertIn("dominant_human_author", result.conversation_exclusion_reasons)
+        self.assertFalse(result.conversation_suitable)
+
     def test_profiles_score_channels_with_one_pure_engine(self) -> None:
         software = load_profile(SOFTWARE_PROFILE)
         software_messages = [

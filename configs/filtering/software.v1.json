@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "software",
-  "profile_version": "1.2.0",
+  "profile_version": "1.4.0",
   "domain": "software",
   "description": "Perfil interpretável para selecionar servidores e canais de engenharia de software e OSS.",
   "server": {
@@ -527,6 +527,14 @@
       "manual_review_classes": [
         "B"
       ]
+    },
+    "conversation_suitability": {
+      "min_human_users": 5,
+      "min_interacting_human_users": 3,
+      "min_interaction_ratio": 0.05,
+      "min_author_transition_ratio": 0.2,
+      "max_dominant_author_ratio": 0.7,
+      "max_bot_message_ratio": 0.25
     },
     "exclude_bot_messages": true,
     "max_evidence_examples": 5,

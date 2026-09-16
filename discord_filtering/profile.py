@@ -11,6 +11,7 @@ from .models import (
     ChannelClassificationPolicy,
     ChannelPolicy,
     ComponentWeights,
+    ConversationSuitabilityPolicy,
     ContentSignal,
     FilterProfile,
     ServerPolicy,
@@ -296,6 +297,7 @@ def profile_from_dict(raw: Mapping[str, Any]) -> FilterProfile:
             "signals",
             "component_weights",
             "classification",
+            "conversation_suitability",
             "exclude_bot_messages",
             "max_evidence_examples",
             "score_field",
@@ -436,6 +438,54 @@ def profile_from_dict(raw: Mapping[str, Any]) -> FilterProfile:
         include_classes=include_classes,
         manual_review_classes=manual_review_classes,
     )
+    conversation_raw = _object(
+        channel_raw["conversation_suitability"],
+        "$profile.channel.conversation_suitability",
+    )
+    _exact_keys(
+        conversation_raw,
+        {
+            "min_human_users",
+            "min_interacting_human_users",
+            "min_interaction_ratio",
+            "min_author_transition_ratio",
+            "max_dominant_author_ratio",
+            "max_bot_message_ratio",
+        },
+        "$profile.channel.conversation_suitability",
+    )
+    conversation_suitability = ConversationSuitabilityPolicy(
+        min_human_users=_integer(
+            conversation_raw["min_human_users"],
+            "$profile.channel.conversation_suitability.min_human_users",
+            minimum=1,
+        ),
+        min_interacting_human_users=_integer(
+            conversation_raw["min_interacting_human_users"],
+            "$profile.channel.conversation_suitability.min_interacting_human_users",
+            minimum=1,
+        ),
+        min_interaction_ratio=_ratio(
+            conversation_raw["min_interaction_ratio"],
+            "$profile.channel.conversation_suitability.min_interaction_ratio",
+            allow_zero=False,
+        ),
+        min_author_transition_ratio=_ratio(
+            conversation_raw["min_author_transition_ratio"],
+            "$profile.channel.conversation_suitability.min_author_transition_ratio",
+            allow_zero=False,
+        ),
+        max_dominant_author_ratio=_ratio(
+            conversation_raw["max_dominant_author_ratio"],
+            "$profile.channel.conversation_suitability.max_dominant_author_ratio",
+            allow_zero=False,
+        ),
+        max_bot_message_ratio=_ratio(
+            conversation_raw["max_bot_message_ratio"],
+            "$profile.channel.conversation_suitability.max_bot_message_ratio",
+            allow_zero=False,
+        ),
+    )
     channel_policy = ChannelPolicy(
         metadata_fields=_string_tuple(channel_raw["metadata_fields"], "$profile.channel.metadata_fields"),
         positive_rules=channel_positive,
@@ -449,6 +499,7 @@ def profile_from_dict(raw: Mapping[str, Any]) -> FilterProfile:
         signals=signals,
         component_weights=component_weights,
         classification=classification,
+        conversation_suitability=conversation_suitability,
         exclude_bot_messages=_boolean(
             channel_raw["exclude_bot_messages"],
             "$profile.channel.exclude_bot_messages",
