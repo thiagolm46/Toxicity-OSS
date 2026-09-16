@@ -133,6 +133,8 @@
         "finance/crypto"
       ]
     }
+      ],
+      "required_positive_labels": []
   },
   "channel": {
     "metadata_fields": [

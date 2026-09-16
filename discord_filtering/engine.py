@@ -210,6 +210,7 @@ def classify_server(record: Mapping[str, Any], profile: FilterProfile) -> Server
         policy.overlap_policy,
     )
     margin = round(positive_score - negative_score, 6)
+    matched_positive_labels = {item.label for item in positive_evidence}
     matched_negative_labels = {item.label for item in negative_evidence}
     blocked = tuple(
         sorted(matched_negative_labels.intersection(policy.selection.blocked_negative_labels))
@@ -220,6 +221,14 @@ def classify_server(record: Mapping[str, Any], profile: FilterProfile) -> Server
         and (
             policy.selection.max_negative_score is None
             or negative_score <= policy.selection.max_negative_score
+        )
+        and (
+            not policy.selection.required_positive_labels
+            or bool(
+                matched_positive_labels.intersection(
+                    policy.selection.required_positive_labels
+                )
+            )
         )
         and not blocked
     )

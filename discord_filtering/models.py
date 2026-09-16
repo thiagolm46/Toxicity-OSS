@@ -26,6 +26,7 @@ class ServerSelectionPolicy:
     min_score_margin: float
     max_negative_score: float | None
     blocked_negative_labels: tuple[str, ...]
+    required_positive_labels: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)

@@ -114,6 +114,20 @@ class ServerFilteringTests(unittest.TestCase):
         self.assertEqual(sum(item.credited_weight for item in group_evidence), 4.0)
         self.assertEqual({item.label for item in group_evidence}, {"programming", "coding"})
 
+    def test_software_profile_accepts_generic_software_evidence(self) -> None:
+        generic_software = classify_server(
+            {"id": "8", "name": "Programming developers", "keywords": []},
+            self.profile,
+        )
+        oss_server = classify_server(
+            {"id": "9", "name": "Open source programming", "keywords": []},
+            self.profile,
+        )
+
+        self.assertGreaterEqual(generic_software.positive_score, 7.0)
+        self.assertTrue(generic_software.is_selected)
+        self.assertTrue(oss_server.is_selected)
+
 
 class ChannelScoringTests(unittest.TestCase):
     def test_profiles_score_channels_with_one_pure_engine(self) -> None:

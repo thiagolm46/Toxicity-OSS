@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "software",
-  "profile_version": "1.0.0",
+  "profile_version": "1.2.0",
   "domain": "software",
   "description": "Perfil interpretável para selecionar servidores e canais de engenharia de software e OSS.",
   "server": {
@@ -251,7 +251,8 @@
         "nsfw",
         "finance/crypto",
         "game title"
-      ]
+      ],
+      "required_positive_labels": []
     }
   },
   "channel": {

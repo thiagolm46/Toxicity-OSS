@@ -223,7 +223,13 @@ def profile_from_dict(raw: Mapping[str, Any]) -> FilterProfile:
     selection_raw = _object(server_raw["selection"], "$profile.server.selection")
     _exact_keys(
         selection_raw,
-        {"min_positive_score", "min_score_margin", "max_negative_score", "blocked_negative_labels"},
+        {
+            "min_positive_score",
+            "min_score_margin",
+            "max_negative_score",
+            "blocked_negative_labels",
+            "required_positive_labels",
+        },
         "$profile.server.selection",
     )
     max_negative_raw = selection_raw["max_negative_score"]
@@ -244,6 +250,18 @@ def profile_from_dict(raw: Mapping[str, Any]) -> FilterProfile:
             "$profile.server.selection.blocked_negative_labels",
             f"unknown negative labels: {', '.join(unknown_blocked)}",
         )
+    required_positive_labels = _string_tuple(
+        selection_raw["required_positive_labels"],
+        "$profile.server.selection.required_positive_labels",
+        allow_empty=True,
+    )
+    known_server_positive_labels = {rule.label for rule in server_positive}
+    unknown_required = sorted(set(required_positive_labels) - known_server_positive_labels)
+    if unknown_required:
+        _fail(
+            "$profile.server.selection.required_positive_labels",
+            f"unknown positive labels: {', '.join(unknown_required)}",
+        )
     server_policy = ServerPolicy(
         fields=_string_tuple(server_raw["fields"], "$profile.server.fields"),
         positive_rules=server_positive,
@@ -262,6 +280,7 @@ def profile_from_dict(raw: Mapping[str, Any]) -> FilterProfile:
             ),
             max_negative_score=max_negative,
             blocked_negative_labels=blocked_labels,
+            required_positive_labels=required_positive_labels,
         ),
     )
 
