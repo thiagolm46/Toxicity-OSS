@@ -11,6 +11,7 @@ from typing import Any
 from .models import (
     ChannelClassification,
     ContentSignal,
+    EvidenceConfirmationPolicy,
     FilterProfile,
     RuleEvidence,
     ServerClassification,
@@ -95,31 +96,64 @@ def _score_rules(
     fields: tuple[str, ...],
     rules: tuple[WeightedRule, ...],
     overlap_policy: str,
+    field_weights: Mapping[str, float] | None = None,
+    confirmation: EvidenceConfirmationPolicy | None = None,
 ) -> tuple[float, tuple[RuleEvidence, ...]]:
     if overlap_policy != "max_per_group":
         raise ValueError(f"unsupported overlap policy: {overlap_policy}")
 
-    provisional: list[tuple[WeightedRule, str, int, re.Match[str]]] = []
+    provisional: list[tuple[WeightedRule, str, int, re.Match[str], float]] = []
     for field, value_index, text in _field_values(record, fields):
         for rule in rules:
             match = _compiled(rule.pattern).search(text)
             if match is not None:
-                provisional.append((rule, field, value_index, match))
+                adjusted_weight = rule.weight * (field_weights or {}).get(field, 1.0)
+                provisional.append((rule, field, value_index, match, adjusted_weight))
 
-    winning_rule_by_group: dict[str, WeightedRule] = {}
-    for rule, _field, _value_index, _match in provisional:
+    winning_rule_by_group: dict[str, tuple[WeightedRule, float]] = {}
+    for rule, _field, _value_index, _match, adjusted_weight in provisional:
         winner = winning_rule_by_group.get(rule.group)
-        if winner is None or rule.weight > winner.weight:
-            winning_rule_by_group[rule.group] = rule
+        if winner is None or adjusted_weight > winner[1]:
+            winning_rule_by_group[rule.group] = (rule, adjusted_weight)
 
-    credited_rule_ids: set[str] = set()
+    winning_index_by_group: dict[str, int] = {}
+    for index, (rule, _field, _value_index, _match, adjusted_weight) in enumerate(provisional):
+        winner, winning_weight = winning_rule_by_group[rule.group]
+        if (
+            winner.rule_id == rule.rule_id
+            and adjusted_weight == winning_weight
+            and rule.group not in winning_index_by_group
+        ):
+            winning_index_by_group[rule.group] = index
+
+    confirmation_by_index: Counter[int] = Counter()
+    if confirmation is not None:
+        fields_by_group: dict[str, list[str]] = {}
+        evidence_index_by_group_field: dict[tuple[str, str], int] = {}
+        for index, (rule, field, _value_index, _match, _adjusted_weight) in enumerate(provisional):
+            fields = fields_by_group.setdefault(rule.group, [])
+            if field not in fields:
+                fields.append(field)
+                evidence_index_by_group_field[(rule.group, field)] = index
+        for group, fields in fields_by_group.items():
+            base_index = winning_index_by_group[group]
+            base_field = provisional[base_index][1]
+            remaining_bonus = confirmation.max_bonus_per_group
+            for field in fields:
+                if field == base_field or remaining_bonus <= 0.0:
+                    continue
+                credited_bonus = min(
+                    confirmation.bonus_per_additional_field,
+                    remaining_bonus,
+                )
+                confirmation_by_index[evidence_index_by_group_field[(group, field)]] += credited_bonus
+                remaining_bonus -= credited_bonus
+
     evidence: list[RuleEvidence] = []
-    for rule, field, value_index, match in provisional:
-        winner = winning_rule_by_group[rule.group]
-        credited = 0.0
-        if winner.rule_id == rule.rule_id and rule.rule_id not in credited_rule_ids:
-            credited = rule.weight
-            credited_rule_ids.add(rule.rule_id)
+    for index, (rule, field, value_index, match, adjusted_weight) in enumerate(provisional):
+        credited = confirmation_by_index[index]
+        if winning_index_by_group[rule.group] == index:
+            credited += adjusted_weight
         evidence.append(
             RuleEvidence(
                 rule_id=rule.rule_id,
@@ -130,11 +164,11 @@ def _score_rules(
                 matched_text=match.group(0),
                 start=match.start(),
                 end=match.end(),
-                weight=rule.weight,
+                weight=adjusted_weight,
                 credited_weight=credited,
             )
         )
-    score = round(sum(rule.weight for rule in winning_rule_by_group.values()), 6)
+    score = round(sum(item.credited_weight for item in evidence), 6)
     return score, tuple(evidence)
 
 
@@ -143,6 +177,17 @@ def _optional_text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _metadata_availability(record: Mapping[str, Any], fields: tuple[str, ...]) -> dict[str, bool]:
+    return {field: bool(_field_values(record, (field,))) for field in fields}
+
+
+def _group_scores(evidence: tuple[RuleEvidence, ...]) -> dict[str, float]:
+    scores: dict[str, float] = {}
+    for item in evidence:
+        scores[item.group] = scores.get(item.group, 0.0) + item.credited_weight
+    return {group: round(score, 6) for group, score in sorted(scores.items())}
 
 
 def _identifier_from(record: Mapping[str, Any], *fields: str) -> str:
@@ -212,36 +257,48 @@ def classify_server(record: Mapping[str, Any], profile: FilterProfile) -> Server
         policy.fields,
         policy.positive_rules,
         policy.overlap_policy,
+        policy.field_weights,
+        policy.confirmation,
     )
     negative_score, negative_evidence = _score_rules(
         record,
         policy.fields,
         policy.negative_rules,
         policy.overlap_policy,
+        policy.field_weights,
+        policy.confirmation,
     )
     margin = round(positive_score - negative_score, 6)
-    matched_positive_labels = {item.label for item in positive_evidence}
-    matched_negative_labels = {item.label for item in negative_evidence}
-    blocked = tuple(
-        sorted(matched_negative_labels.intersection(policy.selection.blocked_negative_labels))
-    )
-    selected = (
-        positive_score >= policy.selection.min_positive_score
-        and margin >= policy.selection.min_score_margin
-        and (
-            policy.selection.max_negative_score is None
-            or negative_score <= policy.selection.max_negative_score
+    metadata_available = _metadata_availability(record, policy.fields)
+    metadata_completeness = round(sum(metadata_available.values()) / len(policy.fields), 6)
+    positive_group_scores = _group_scores(positive_evidence)
+    negative_group_scores = _group_scores(negative_evidence)
+    if policy.selection is None:
+        blocked: tuple[str, ...] = ()
+        selected: bool | None = None
+    else:
+        matched_positive_labels = {item.label for item in positive_evidence}
+        matched_negative_labels = {item.label for item in negative_evidence}
+        blocked = tuple(
+            sorted(matched_negative_labels.intersection(policy.selection.blocked_negative_labels))
         )
-        and (
-            not policy.selection.required_positive_labels
-            or bool(
-                matched_positive_labels.intersection(
-                    policy.selection.required_positive_labels
+        selected = (
+            positive_score >= policy.selection.min_positive_score
+            and margin >= policy.selection.min_score_margin
+            and (
+                policy.selection.max_negative_score is None
+                or negative_score <= policy.selection.max_negative_score
+            )
+            and (
+                not policy.selection.required_positive_labels
+                or bool(
+                    matched_positive_labels.intersection(
+                        policy.selection.required_positive_labels
+                    )
                 )
             )
+            and not blocked
         )
-        and not blocked
-    )
 
     return ServerClassification(
         profile_id=profile.profile_id,
@@ -262,6 +319,15 @@ def classify_server(record: Mapping[str, Any], profile: FilterProfile) -> Server
         positive_score=positive_score,
         negative_score=negative_score,
         score_margin=margin,
+        positive_score_field=policy.positive_score_field,
+        negative_score_field=policy.negative_score_field,
+        affinity_score_field=policy.affinity_score_field,
+        metadata_available=metadata_available,
+        metadata_completeness=metadata_completeness,
+        positive_groups=tuple(positive_group_scores),
+        negative_groups=tuple(negative_group_scores),
+        positive_group_scores=positive_group_scores,
+        negative_group_scores=negative_group_scores,
         positive_evidence=positive_evidence,
         negative_evidence=negative_evidence,
         blocked_negative_terms=blocked,
@@ -410,6 +476,8 @@ def score_channel(
     if not isinstance(record, Mapping):
         raise TypeError("record must be a mapping")
     policy = profile.channel
+    if policy is None:
+        raise ValueError("profile does not define a channel scoring policy")
     metadata_positive, positive_evidence = _score_rules(
         record,
         policy.metadata_fields,

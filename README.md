@@ -35,6 +35,10 @@ Não existem keywords de domínio dentro do código Python. Para estudar outro t
 de comunidade, copie um perfil JSON, atribua um novo `profile_id` e ajuste os
 grupos de termos, pesos e limiares.
 
+A estrutura validada dos perfis, os schemas `v1` e `v2`, os campos de auditoria
+e um template para outro dominio estao em
+[`FILTER_PROFILE_REFERENCE.md`](docs/methodology/FILTER_PROFILE_REFERENCE.md).
+
 ## Instalação
 
 ```powershell

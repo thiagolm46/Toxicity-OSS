@@ -19,10 +19,13 @@ from discord_filtering.storage import (
     sha256_file,
     write_records_with_manifest,
 )
+from discord_filtering.service import filter_servers
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SOFTWARE_PROFILE = ROOT / "configs" / "filtering" / "software.v1.json"
+SOFTWARE_ENGINEERING_PROFILE = ROOT / "configs" / "filtering" / "software.engineering.v1.json"
+SOFTWARE_ENGINEERING_SCORING_PROFILE = ROOT / "configs" / "filtering" / "software.engineering.v2.json"
 GAMES_PROFILE = ROOT / "configs" / "filtering" / "games.v1.json"
 
 
@@ -127,6 +130,181 @@ class ServerFilteringTests(unittest.TestCase):
         self.assertGreaterEqual(generic_software.positive_score, 7.0)
         self.assertTrue(generic_software.is_selected)
         self.assertTrue(oss_server.is_selected)
+
+    def test_engineering_profile_prioritizes_curated_metadata_fields(self) -> None:
+        profile = load_profile(SOFTWARE_ENGINEERING_PROFILE)
+        result = classify_server(
+            {
+                "id": "10",
+                "name": "Community",
+                "description": "A place to meet people.",
+                "reasons_to_join": ["Learn Python with peers"],
+                "keywords": ["open source", "software engineering"],
+            },
+            profile,
+        )
+        irrelevant = classify_server(
+            {"id": "11", "name": "Gaming community", "keywords": ["minecraft"]},
+            profile,
+        )
+
+        self.assertTrue(result.is_selected)
+        self.assertGreater(
+            sum(item.credited_weight for item in result.positive_evidence if item.field == "keywords"),
+            sum(item.credited_weight for item in result.positive_evidence if item.field == "reasons_to_join"),
+        )
+        self.assertFalse(irrelevant.is_selected)
+
+    def test_scoring_profile_uses_confirmation_without_selection(self) -> None:
+        profile = load_profile(SOFTWARE_ENGINEERING_SCORING_PROFILE)
+        result = classify_server(
+            {
+                "id": "12",
+                "name": "Python",
+                "description": "Python Java Rust",
+            },
+            profile,
+        )
+
+        record = result.to_record()
+        self.assertIsNone(profile.server.selection)
+        self.assertIsNone(profile.channel)
+        self.assertIsNone(result.is_selected)
+        self.assertEqual(result.positive_groups, ("programming-language",))
+        self.assertEqual(result.positive_score, 2.0)
+        self.assertEqual(result.metadata_completeness, 0.4)
+        self.assertEqual(
+            json.loads(record["metadata_available_json"]),
+            {
+                "about": False,
+                "description": True,
+                "keywords": False,
+                "name": True,
+                "reasons_to_join": False,
+            },
+        )
+        self.assertEqual(record["positive_group_count"], 1)
+        self.assertEqual(record["software_positive_score"], result.positive_score)
+        self.assertEqual(record["software_negative_score"], result.negative_score)
+        self.assertEqual(record["software_affinity_score"], result.score_margin)
+
+    def test_scoring_profile_emits_all_servers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            input_path = Path(temporary_directory) / "servers.json"
+            input_path.write_text(
+                json.dumps(
+                    [
+                        {"id": "positive", "name": "Software development"},
+                        {"id": "negative", "name": "Minecraft trading"},
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            run = filter_servers(input_path, SOFTWARE_ENGINEERING_SCORING_PROFILE)
+
+        self.assertEqual(run.evaluated_servers, 2)
+        self.assertEqual(len(run.records), 2)
+        self.assertEqual(run.selected_servers, 0)
+        self.assertTrue(all(record["is_selected"] is None for record in run.records))
+        self.assertLess(
+            next(record for record in run.records if record["guild_id"] == "negative")[
+                "software_affinity_score"
+            ],
+            0,
+        )
+
+    def test_scoring_profile_exports_separate_score_components(self) -> None:
+        profile = load_profile(SOFTWARE_ENGINEERING_SCORING_PROFILE)
+        result = classify_server(
+            {
+                "id": "hybrid",
+                "name": "Software development for Minecraft",
+            },
+            profile,
+        )
+
+        record = result.to_record()
+        self.assertGreater(record["software_positive_score"], 0.0)
+        self.assertGreater(record["software_negative_score"], 0.0)
+        self.assertEqual(
+            record["software_affinity_score"],
+            record["software_positive_score"] - record["software_negative_score"],
+        )
+
+    def test_scoring_profile_preserves_moderate_artifact_and_developer_evidence(self) -> None:
+        profile = load_profile(SOFTWARE_ENGINEERING_SCORING_PROFILE)
+        game_server = classify_server(
+            {
+                "id": "game",
+                "name": "Official Fortnite Festival",
+                "description": "Talk with fellow rhythm gamers and devs.",
+            },
+            profile,
+        )
+        artifact_server = classify_server(
+            {
+                "id": "artifact",
+                "description": "A place for developers building plugins for a Python library.",
+            },
+            profile,
+        )
+        software_server = classify_server(
+            {
+                "id": "software",
+                "description": (
+                    "Comunidad de desarrolladores de software de codigo abierto "
+                    "using automated testing, CI-CD, and GitHub."
+                ),
+            },
+            profile,
+        )
+        game_development_server = classify_server(
+            {"id": "game-dev", "description": "Independent game development community."},
+            profile,
+        )
+        giveaway_server = classify_server(
+            {"id": "giveaway", "description": "Daily giveaways for members."},
+            profile,
+        )
+        trading_card_server = classify_server(
+            {"id": "card", "description": "A trading card game community."},
+            profile,
+        )
+        finance_server = classify_server(
+            {"id": "finance", "description": "Forex trading signals and crypto news."},
+            profile,
+        )
+        developer_community_server = classify_server(
+            {"id": "developer-community", "description": "A developer community for developers."},
+            profile,
+        )
+
+        self.assertIn("developer-community", game_server.positive_groups)
+        self.assertLess(game_server.score_margin, 0.0)
+        self.assertTrue(
+            {"developer-community", "software-artifact", "programming-language"}.issubset(
+                artifact_server.positive_groups
+            )
+        )
+        self.assertIn("software-specialization", game_development_server.positive_groups)
+        self.assertEqual(giveaway_server.negative_groups, ("promotion",))
+        self.assertEqual(trading_card_server.negative_score, 0.0)
+        self.assertEqual(finance_server.negative_groups, ("finance",))
+        developer_credits = [
+            evidence.credited_weight
+            for evidence in developer_community_server.positive_evidence
+            if evidence.group == "developer-community"
+        ]
+        self.assertEqual(sum(developer_credits), 6.25)
+        self.assertTrue(
+            {
+                "software-intent",
+                "developer-community",
+                "open-source",
+                "engineering-practice",
+                "software-artifact",
+            }.issubset(software_server.positive_groups)
+        )
 
 
 class ChannelScoringTests(unittest.TestCase):

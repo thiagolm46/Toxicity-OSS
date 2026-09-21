@@ -13,6 +13,7 @@ from .models import (
     ComponentWeights,
     ConversationSuitabilityPolicy,
     ContentSignal,
+    EvidenceConfirmationPolicy,
     FilterProfile,
     ServerPolicy,
     ServerSelectionPolicy,
@@ -197,23 +198,116 @@ def _validate_weight_sum(values: list[float], path: str) -> None:
         _fail(path, f"weights must sum to 1.0 (got {sum(values):.12g})")
 
 
+def _server_scoring_policy(raw: Mapping[str, Any]) -> ServerPolicy:
+    server_raw = _object(raw, "$profile.server")
+    _exact_keys(
+        server_raw,
+        {
+            "fields",
+            "field_weights",
+            "positive_rules",
+            "negative_rules",
+            "overlap_policy",
+            "confirmation",
+            "positive_score_field",
+            "negative_score_field",
+            "affinity_score_field",
+        },
+        "$profile.server",
+    )
+    overlap = _string(server_raw["overlap_policy"], "$profile.server.overlap_policy")
+    if overlap != "max_per_group":
+        _fail("$profile.server.overlap_policy", "only 'max_per_group' is supported")
+    fields = _string_tuple(server_raw["fields"], "$profile.server.fields")
+    field_weights_raw = _object(server_raw["field_weights"], "$profile.server.field_weights")
+    if set(field_weights_raw) != set(fields):
+        _fail("$profile.server.field_weights", "must define exactly the configured server fields")
+    confirmation_raw = _object(server_raw["confirmation"], "$profile.server.confirmation")
+    _exact_keys(
+        confirmation_raw,
+        {"bonus_per_additional_field", "max_bonus_per_group"},
+        "$profile.server.confirmation",
+    )
+    score_fields = {
+        "positive": _identifier(
+            server_raw["positive_score_field"],
+            "$profile.server.positive_score_field",
+        ),
+        "negative": _identifier(
+            server_raw["negative_score_field"],
+            "$profile.server.negative_score_field",
+        ),
+        "affinity": _identifier(
+            server_raw["affinity_score_field"],
+            "$profile.server.affinity_score_field",
+        ),
+    }
+    if len(set(score_fields.values())) != len(score_fields):
+        _fail("$profile.server", "score field aliases must be distinct")
+    return ServerPolicy(
+        fields=fields,
+        field_weights={
+            field: _number(
+                field_weights_raw[field],
+                f"$profile.server.field_weights.{field}",
+                minimum=0.0,
+            )
+            for field in fields
+        },
+        positive_rules=_weighted_rules(server_raw["positive_rules"], "$profile.server.positive_rules"),
+        negative_rules=_weighted_rules(server_raw["negative_rules"], "$profile.server.negative_rules"),
+        overlap_policy=overlap,
+        selection=None,
+        confirmation=EvidenceConfirmationPolicy(
+            bonus_per_additional_field=_number(
+                confirmation_raw["bonus_per_additional_field"],
+                "$profile.server.confirmation.bonus_per_additional_field",
+                minimum=0.0,
+            ),
+            max_bonus_per_group=_number(
+                confirmation_raw["max_bonus_per_group"],
+                "$profile.server.confirmation.max_bonus_per_group",
+                minimum=0.0,
+            ),
+        ),
+        positive_score_field=score_fields["positive"],
+        negative_score_field=score_fields["negative"],
+        affinity_score_field=score_fields["affinity"],
+    )
+
+
 def profile_from_dict(raw: Mapping[str, Any]) -> FilterProfile:
     """Build an immutable profile from already parsed JSON with strict validation."""
 
     root = _object(dict(raw), "$profile")
+    schema_version = _integer(root.get("schema_version"), "$profile.schema_version", minimum=1)
+    if schema_version == 2:
+        _exact_keys(
+            root,
+            {"schema_version", "profile_id", "profile_version", "domain", "description", "server"},
+            "$profile",
+        )
+        return FilterProfile(
+            schema_version=schema_version,
+            profile_id=_identifier(root["profile_id"], "$profile.profile_id"),
+            profile_version=_string(root["profile_version"], "$profile.profile_version"),
+            domain=_identifier(root["domain"], "$profile.domain"),
+            description=_string(root["description"], "$profile.description"),
+            server=_server_scoring_policy(root["server"]),
+            channel=None,
+        )
+    if schema_version != 1:
+        _fail("$profile.schema_version", f"unsupported version {schema_version}; expected 1 or 2")
     _exact_keys(
         root,
         {"schema_version", "profile_id", "profile_version", "domain", "description", "server", "channel"},
         "$profile",
     )
-    schema_version = _integer(root["schema_version"], "$profile.schema_version", minimum=1)
-    if schema_version != 1:
-        _fail("$profile.schema_version", f"unsupported version {schema_version}; expected 1")
 
     server_raw = _object(root["server"], "$profile.server")
     _exact_keys(
         server_raw,
-        {"fields", "positive_rules", "negative_rules", "overlap_policy", "selection"},
+        {"fields", "field_weights", "positive_rules", "negative_rules", "overlap_policy", "selection"},
         "$profile.server",
     )
     overlap = _string(server_raw["overlap_policy"], "$profile.server.overlap_policy")
@@ -221,6 +315,14 @@ def profile_from_dict(raw: Mapping[str, Any]) -> FilterProfile:
         _fail("$profile.server.overlap_policy", "only 'max_per_group' is supported")
     server_positive = _weighted_rules(server_raw["positive_rules"], "$profile.server.positive_rules")
     server_negative = _weighted_rules(server_raw["negative_rules"], "$profile.server.negative_rules")
+    server_fields = _string_tuple(server_raw["fields"], "$profile.server.fields")
+    field_weights_raw = _object(server_raw["field_weights"], "$profile.server.field_weights")
+    if set(field_weights_raw) != set(server_fields):
+        _fail("$profile.server.field_weights", "must define exactly the configured server fields")
+    field_weights = {
+        field: _number(field_weights_raw[field], f"$profile.server.field_weights.{field}", minimum=0.0)
+        for field in server_fields
+    }
     selection_raw = _object(server_raw["selection"], "$profile.server.selection")
     _exact_keys(
         selection_raw,
@@ -264,7 +366,8 @@ def profile_from_dict(raw: Mapping[str, Any]) -> FilterProfile:
             f"unknown positive labels: {', '.join(unknown_required)}",
         )
     server_policy = ServerPolicy(
-        fields=_string_tuple(server_raw["fields"], "$profile.server.fields"),
+        fields=server_fields,
+        field_weights=field_weights,
         positive_rules=server_positive,
         negative_rules=server_negative,
         overlap_policy=overlap,

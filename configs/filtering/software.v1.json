@@ -14,6 +14,15 @@
       "vanity_url_code",
       "keywords"
     ],
+    "field_weights": {
+      "name": 1,
+      "description": 1,
+      "about": 1,
+      "reasons_to_join": 1,
+      "slug": 1,
+      "vanity_url_code": 1,
+      "keywords": 1
+    },
     "overlap_policy": "max_per_group",
     "positive_rules": [
       {

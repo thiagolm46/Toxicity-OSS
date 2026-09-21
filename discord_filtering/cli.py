@@ -33,9 +33,11 @@ def _cmd_validate_profile(args: argparse.Namespace) -> int:
         "schema_version": profile.schema_version,
         "server_positive_rules": len(profile.server.positive_rules),
         "server_negative_rules": len(profile.server.negative_rules),
-        "channel_positive_rules": len(profile.channel.positive_rules),
-        "channel_negative_rules": len(profile.channel.negative_rules),
-        "content_signals": len(profile.channel.signals),
+        "selection_defined": profile.server.selection is not None,
+        "channel_scoring_defined": profile.channel is not None,
+        "channel_positive_rules": len(profile.channel.positive_rules) if profile.channel else 0,
+        "channel_negative_rules": len(profile.channel.negative_rules) if profile.channel else 0,
+        "content_signals": len(profile.channel.signals) if profile.channel else 0,
         "sha256": sha256_file(args.profile),
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))

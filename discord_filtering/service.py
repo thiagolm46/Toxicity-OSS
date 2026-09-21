@@ -54,13 +54,13 @@ def filter_servers(
     emitted = [
         result.to_record()
         for result in classifications
-        if include_rejected or result.is_selected
+        if profile.server.selection is None or include_rejected or result.is_selected
     ]
     emitted.sort(
         key=lambda item: (
-            not bool(item["is_selected"]),
-            -float(item["positive_score"]),
             -float(item["score_margin"]),
+            -float(item["positive_score"]),
+            float(item["negative_score"]),
             str(item["guild_id"]),
         )
     )
@@ -68,7 +68,7 @@ def filter_servers(
         profile=profile,
         records=tuple(emitted),
         evaluated_servers=len(classifications),
-        selected_servers=sum(result.is_selected for result in classifications),
+        selected_servers=sum(bool(result.is_selected) for result in classifications),
     )
 
 
@@ -85,13 +85,16 @@ def write_server_filtering_run(
 
     assert_distinct_paths(input_path, output_path)
     manifest = build_manifest(
-        command="select-servers",
+        command="score-servers" if run.profile.server.selection is None else "select-servers",
         profile_path=profile_path,
         profile_id=run.profile.profile_id,
         profile_version=run.profile.profile_version,
         domain=run.profile.domain,
         input_paths=[input_path],
-        parameters={"include_rejected": include_rejected},
+        parameters={
+            "include_rejected": include_rejected,
+            "selection_applied": run.profile.server.selection is not None,
+        },
         counts={
             "evaluated_servers": run.evaluated_servers,
             "selected_servers": run.selected_servers,
@@ -256,6 +259,8 @@ def score_channels(
             "choose exactly one channel scope: guild_name, guild_id, or all_guilds=True"
         )
     profile = load_profile(profile_path)
+    if profile.channel is None:
+        raise ValueError("profile does not define a channel scoring policy")
     frame = _load_message_frame(
         input_path,
         guild_name=guild_name,

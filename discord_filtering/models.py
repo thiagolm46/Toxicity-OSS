@@ -30,12 +30,23 @@ class ServerSelectionPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class EvidenceConfirmationPolicy:
+    bonus_per_additional_field: float
+    max_bonus_per_group: float
+
+
+@dataclass(frozen=True, slots=True)
 class ServerPolicy:
     fields: tuple[str, ...]
+    field_weights: dict[str, float]
     positive_rules: tuple[WeightedRule, ...]
     negative_rules: tuple[WeightedRule, ...]
     overlap_policy: str
-    selection: ServerSelectionPolicy
+    selection: ServerSelectionPolicy | None
+    confirmation: EvidenceConfirmationPolicy | None = None
+    positive_score_field: str = "positive_score"
+    negative_score_field: str = "negative_score"
+    affinity_score_field: str = "score_margin"
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,7 +123,7 @@ class FilterProfile:
     domain: str
     description: str
     server: ServerPolicy
-    channel: ChannelPolicy
+    channel: ChannelPolicy | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,10 +211,19 @@ class ServerClassification:
     positive_score: float
     negative_score: float
     score_margin: float
+    positive_score_field: str
+    negative_score_field: str
+    affinity_score_field: str
+    metadata_available: dict[str, bool]
+    metadata_completeness: float
+    positive_groups: tuple[str, ...]
+    negative_groups: tuple[str, ...]
+    positive_group_scores: dict[str, float]
+    negative_group_scores: dict[str, float]
     positive_evidence: tuple[RuleEvidence, ...]
     negative_evidence: tuple[RuleEvidence, ...]
     blocked_negative_terms: tuple[str, ...]
-    is_selected: bool
+    is_selected: bool | None
 
     def to_record(self) -> dict[str, Any]:
         positive_terms = list(dict.fromkeys(item.label for item in self.positive_evidence))
@@ -218,7 +238,7 @@ class ServerClassification:
                 detail["polarity"] = polarity
                 evidence_by_field.setdefault(item.field, []).append(detail)
 
-        return {
+        record = {
             "profile_id": self.profile_id,
             "profile_version": self.profile_version,
             "domain": self.domain,
@@ -237,12 +257,24 @@ class ServerClassification:
             "positive_score": self.positive_score,
             "negative_score": self.negative_score,
             "score_margin": self.score_margin,
+            "metadata_available_json": compact_json(self.metadata_available),
+            "metadata_completeness": self.metadata_completeness,
+            "positive_group_count": len(self.positive_groups),
+            "negative_group_count": len(self.negative_groups),
+            "positive_groups": compact_json(list(self.positive_groups)),
+            "negative_groups": compact_json(list(self.negative_groups)),
+            "positive_group_scores": compact_json(self.positive_group_scores),
+            "negative_group_scores": compact_json(self.negative_group_scores),
             "matched_positive_terms": compact_json(positive_terms),
             "matched_negative_terms": compact_json(negative_terms),
             "blocked_negative_terms": compact_json(list(self.blocked_negative_terms)),
             "server_evidence_json": compact_json(evidence_by_field),
             "is_selected": self.is_selected,
         }
+        record[self.positive_score_field] = self.positive_score
+        record[self.negative_score_field] = self.negative_score
+        record[self.affinity_score_field] = self.score_margin
+        return record
 
 
 @dataclass(frozen=True, slots=True)
