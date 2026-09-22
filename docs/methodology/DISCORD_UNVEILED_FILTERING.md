@@ -25,6 +25,10 @@ parametros e contagens para auditoria e reproducao.
 
 ## Etapa 1: servidores de engenharia de software
 
+O registro detalhado da execucao final, incluindo a auditoria manual e os 32
+servidores validados, esta em
+[`SERVER_FILTERING_STAGE.md`](SERVER_FILTERING_STAGE.md).
+
 A selecao examina `name`, `description`, `about`, `reasons_to_join`, `slug`,
 `vanity_url_code` e `keywords` do catalogo
 [`servers_metadata.txt`](../../data/raw/server_metadata/servers_metadata.txt).
