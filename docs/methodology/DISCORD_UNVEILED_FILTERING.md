@@ -60,6 +60,14 @@ artefatos estao em
 
 ## Etapa 2: canais relevantes para conversas
 
+Para a execucao final do corpus `affinity_v2`, a selecao e a limpeza foram
+feitas com as estatisticas por canal e a lista manual de exclusao, e nao com a
+classificacao A-D descrita como metodologia generica abaixo. O procedimento
+executado, seus criterios, contagens e artefatos estao documentados em
+[`CHANNEL_SELECTION_STAGE.md`](CHANNEL_SELECTION_STAGE.md). A secao a seguir
+descreve o scoring de canais disponivel no perfil; nao deve ser interpretada
+como se esse scoring tivesse produzido o Parquet final `affinity_v2`.
+
 As mensagens dos servidores selecionados sao agrupadas por `guild_id` e
 `channel_id`. Cada canal recebe tres componentes, normalizados entre 0 e 1:
 
