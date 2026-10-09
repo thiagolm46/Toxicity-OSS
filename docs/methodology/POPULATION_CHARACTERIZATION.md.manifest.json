@@ -1,0 +1,36 @@
+{
+  "manifest_schema_version": 1,
+  "command": "generate-population-report",
+  "generator_sha256": "add601eabd2d89edb60d9e3aabf9938ebdcfce8f7798d2ef2bb41408930cb47f",
+  "population_manifest_sha256": "bd3d9953ade9abf6a4625bbf79d572358fa23a4a8259751650fafc3068892e8e",
+  "inputs": [
+    {
+      "path": "C:\\Users\\thiag\\OneDrive\\Documentos\\Mestrado\\Toxicity-OSS\\data\\processed\\disentanglement\\population_payload_v2\\channels.csv",
+      "sha256": "937a2d019b4fef8f4cee17702811c094921e881333087384d029586c221dbe93"
+    },
+    {
+      "path": "C:\\Users\\thiag\\OneDrive\\Documentos\\Mestrado\\Toxicity-OSS\\data\\processed\\disentanglement\\population_payload_v2\\servers.csv",
+      "sha256": "46ff61f2392f25682cab65725f163ff4d22e9be7ae981d0114fe7e7fc5b3e252"
+    },
+    {
+      "path": "C:\\Users\\thiag\\OneDrive\\Documentos\\Mestrado\\Toxicity-OSS\\data\\processed\\disentanglement\\population_payload_v2\\temporal_activity.csv",
+      "sha256": "80ae0e34eca44111cb921a0bbe871967d566463606be96f045875bc85ec83777"
+    },
+    {
+      "path": "C:\\Users\\thiag\\OneDrive\\Documentos\\Mestrado\\Toxicity-OSS\\data\\processed\\disentanglement\\population_payload_v2\\reply_distances.csv",
+      "sha256": "6790288a0c81d76aaa10719a2fb2d2d875430683278b53d550bd80a3e92f577c"
+    },
+    {
+      "path": "C:\\Users\\thiag\\OneDrive\\Documentos\\Mestrado\\Toxicity-OSS\\data\\processed\\disentanglement\\population_payload_v2\\concentration.csv",
+      "sha256": "d50f9373fddf56a4ca0a39a86da14ce1c065ddd7c4cb02140ec4892e62a1ace7"
+    },
+    {
+      "path": "C:\\Users\\thiag\\OneDrive\\Documentos\\Mestrado\\Toxicity-OSS\\data\\processed\\disentanglement\\population_payload_v2\\summary.json",
+      "sha256": "4c252b7debc71d72982399957e1ba069f87af428391896326f6b67fdc78dfc25"
+    }
+  ],
+  "output": {
+    "path": "C:\\Users\\thiag\\OneDrive\\Documentos\\Mestrado\\Toxicity-OSS\\docs\\methodology\\POPULATION_CHARACTERIZATION.md",
+    "sha256": "8807c6420c0a6896b83d35cab5dd72926aacc3ea062c33d2bebf97918dc2f489"
+  }
+}

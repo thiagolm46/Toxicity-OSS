@@ -42,6 +42,138 @@ e D podem ser amostrados como controle de calibracao, mas nao sao o foco da
 primeira rodada. Canais com poucos dados sao inconclusivos: nao devem ser
 interpretados como irrelevantes somente por terem baixo volume.
 
+## Caracterizacao inicial dos canais mantidos
+
+Antes de sortear janelas, execute a caracterizacao da populacao congelada:
+
+```powershell
+python -m discord_disentanglement.population
+```
+
+O padrao le o Parquet da Etapa 2 com sufixo
+`excluded_channels_min500_interacting5` e escreve em
+`data/processed/disentanglement/population_payload_v2`. Os artefatos iniciais
+em `data/processed/disentanglement/population` preservam a definicao anterior.
+Para outro corpus:
+
+```powershell
+python -m discord_disentanglement.population `
+   --input <mensagens_mantidas.parquet> `
+   --output <diretorio_novo> `
+   --memory-limit 2GB
+```
+
+A rotina usa DuckDB em disco, nao altera a entrada e recusa substituir
+relatorios existentes. Reserve espaco para o banco temporario e seus arquivos
+de spill, que podem ser maiores que o Parquet comprimido. O limite informado
+controla a memoria do DuckDB, nao toda a memoria do processo Python.
+
+O documento detalhado [POPULATION_CHARACTERIZATION.md](POPULATION_CHARACTERIZATION.md)
+e gerado a partir desses artefatos por um segundo arquivo Python executavel.
+Todos os calculos adicionais, tabelas e interpretacoes numericas estao no
+gerador, que verifica os hashes das entradas antes de escrever:
+
+```powershell
+python -m discord_disentanglement.population_report
+```
+
+Use `--overwrite` para regenerar explicitamente um documento existente.
+O gerador aceita `--input-dir` e `--output` e cria um manifesto adjacente ao MD.
+
+| Artefato | Conteudo |
+| --- | --- |
+| `channels.csv` | Volume, autores humanos distintos, cobertura temporal, dias ativos, replies e flags de qualidade por canal. |
+| `servers.csv` | As mesmas medidas por servidor; autores distintos sao recalculados, nao somados entre canais. |
+| `temporal_activity.csv` | Atividade mensal, por dia da semana ISO (1=segunda, 7=domingo) e hora, em UTC, por canal; separa registros totais de mensagens humanas utilizaveis. |
+| `reply_distances.csv` | Replies por canal, utilizabilidade da origem e status do antecedente; quantis posicionais e temporais e contagens ate 10/100/200 registros. |
+| `concentration.csv` | Canais e servidores ordenados por volume, participacao individual e acumulada; apresenta separadamente todos os registros e mensagens humanas utilizaveis. |
+| `summary.json` | Totais globais, autores distintos no corpus, status dos antecedentes e quantidade de canais/servidores necessarios para atingir 80% do volume. |
+| `manifest.json` | Hashes da entrada, da implementacao, do manifesto da entrada quando disponivel e dos relatorios; parametros e definicoes operacionais. |
+
+Uma mensagem humana tem `is_bot = false`; valor ausente nao e tratado como
+humano. Pela definicao `payload_v2`, nao utilizavel significa exclusivamente
+registro sem texto nao vazio e sem anexo, embed ou sticker registrado. Havendo
+conteudo, todos os tipos Discord sao utilizaveis nesta caracterizacao.
+`usable_human_messages` exige conteudo e autor explicitamente nao-bot.
+Bots com conteudo nao sao chamados de nao utilizaveis, mas ficam fora da
+populacao humana. Utilizabilidade nao substitui revisao de relevancia ou
+elegibilidade dos canais.
+
+IDs ausentes, timestamps invalidos e duplicatas sao flags estruturais separadas,
+nao motivos de nao utilizabilidade. A contagem
+`human_messages_with_structural_issues` identifica mensagens humanas com
+conteudo e algum desses problemas. Elas permanecem no volume utilizavel,
+mas as distancias exigem uma base ordenavel com IDs unicos e timestamp valido.
+As restricoes tecnicas do quadro amostral definitivo devem ser revisadas e
+congeladas antes do sorteio de janelas.
+
+As proporcoes de bots e registros nao utilizaveis usam todos os registros como
+denominador. A proporcao de native replies e apresentada tanto nesse denominador
+quanto nas mensagens humanas utilizaveis. As flags descritivas podem se
+sobrepor e nao devem ser somadas para definir nao utilizabilidade:
+`unusable_records` conta apenas ausencia simultanea de texto e midia.
+Texto vazio sozinho nao prova mensagem ausente: mensagens com midia sao
+utilizaveis. Falhas de timestamp incluem valores ausentes ou invalidos;
+nao impedem utilizabilidade por conteudo, mas impedem agrupamento temporal.
+
+Native reply significa `message_type = 19` com `referenced_message_id` nao vazio.
+Referencias de outros tipos e replies sem ID do antecedente recebem contagens
+separadas. A ausencia de native reply nao e evidencia de ausencia de resposta
+semantica. Para cada reply com origem ordenavel, o antecedente e buscado por
+servidor e ID. Sao separados `resolved`, `parent_not_found`, `different_channel`
+e `not_preceding`; origens nao ordenaveis aparecem no resumo. Antecedente nao
+encontrado pode estar fora do export, sem timestamp valido ou com ID duplicado;
+nao demonstra que a mensagem foi apagada.
+
+Distancias so sao calculadas para antecedentes anteriores no mesmo canal.
+A distancia posicional e a posicao da origem menos a do antecedente na ordem
+UTC/ID dos registros identificaveis, unicos e com timestamp valido, incluindo
+bots e tipos de sistema. Uma distancia 1 indica mensagens adjacentes. Ha uma
+segunda distancia posicional no quadro humano utilizavel, apenas para pares
+em que ambos sao utilizaveis. A distancia temporal e dada em segundos.
+As listas de quantis correspondem a 25%, 50%, 75%, 90%, 95% e 99%.
+As contagens ate 10/100/200 usam a primeira ordem, nao o quadro humano.
+
+A atividade temporal inclui somente buckets observados: meses sem registros
+nao aparecem como linhas. O periodo coberto e o minimo/maximo observado, nao
+uma garantia de completude do historico nem a data de criacao do canal.
+Mensagens ausentes do proprio export nao podem ser quantificadas sem uma fonte
+externa; a rotina mede campos ausentes, payload indisponivel e antecedentes
+nao localizados no corpus.
+
+### Definicao operacional de autores interagentes
+
+Nao confundir tres medidas:
+
+- `distinct_human_authors`: autores distintos com pelo menos um registro
+   explicitamente nao-bot, mesmo que esse registro nao seja utilizavel;
+- `distinct_usable_human_authors`: autores distintos no quadro utilizavel;
+- `native_reply_interacting_authors`: autores distintos de mensagens humanas
+   utilizaveis que enviaram ao menos um native reply a mensagem anterior
+   utilizavel de **outro autor**, no mesmo servidor e canal. Conta emissores;
+   nao conta destinatarios apenas por receberem reply, nem mencoes, replies a si
+   proprio ou antecedentes fora do corpus.
+
+A ultima e uma definicao nova, explicita e conservadora, nao uma reconstituicao
+da coluna historica `interacting_authors` da Etapa 2. O manifesto historico
+declara apenas `interaction_scope = human_messages`; a implementacao de
+`profile-channels` que produziu aquela tabela nao esta disponivel no codigo nem
+no historico Git consultado. Portanto, ainda nao e verificavel se aquela coluna
+contava emissores ou destinatarios, mencoes, autorrespostas e replies nao
+resolvidos. A rotina atual de scoring tem outra coluna,
+`interacting_human_user_count`, e conta emissores com reply a ID humano anterior
+ou `mention_count > 0`; isso nao prova equivalencia com a estatistica historica.
+O criterio 500/5 da Etapa 2 nao e alterado nem reaplicado nesta caracterizacao.
+
+Use a concentracao da populacao `usable_human` para avaliar a alocacao de
+janelas. Se poucos canais acumularem 80% das mensagens, a alocacao proporcional
+privilegiara esses canais. Isso nao e vies para estimar uma media entre
+mensagens, mas pode fornecer cobertura insuficiente para comparacoes entre
+canais. Uma cota minima por canal combinada com alocacao proporcional do
+restante pode preservar cobertura; registre as probabilidades de inclusao e
+os pesos quando o desenho for definido. Esta rotina descreve a populacao;
+nao sorteia janelas nem modifica sua selecao.
+
 ## Qual parametro a amostra estima
 
 O tamanho de amostra somente tem significado depois de declarar a quantidade a
