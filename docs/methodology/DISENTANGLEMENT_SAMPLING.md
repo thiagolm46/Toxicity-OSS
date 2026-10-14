@@ -32,15 +32,19 @@ sorteio e conter, para cada canal:
 - classe do canal, escore e status de elegibilidade;
 - identificadores e timestamps das mensagens em ordem cronologica.
 
-A fila inicial de anotacao usa canais de classe A com
-`conversation_suitable = true` e `eligibility_status = eligible`. A classe A
-mede relevancia tecnica; a adequacao conversacional exige autores humanos,
-interacao por reply/mencao, alternancia de autores, baixa concentracao de um
-unico autor e baixa proporcao de bots. Canais B, e canais A que falharem nessa
-adequacao, devem passar por revisao manual antes de entrar no quadro. Canais C
-e D podem ser amostrados como controle de calibracao, mas nao sao o foco da
-primeira rodada. Canais com poucos dados sao inconclusivos: nao devem ser
-interpretados como irrelevantes somente por terem baixo volume.
+O quadro atual mantem provisoriamente os 407 canais retidos na Etapa 2.
+A inclusao de canais com conversas paralelas ao desenvolvimento de software
+aguarda orientacao; nao se aplica agora uma nova restricao automatica a canais
+de classe A. Canais com poucos dados nao sao considerados irrelevantes apenas
+por terem baixo volume.
+
+O cadastro separado `annotations/disentanglement_channel_frame.csv` registra
+`provisional_eligible`, `eligible`, `pending_review` ou `excluded`, com motivo
+em `eligibility_reason`. Os dois primeiros estados participam do piloto;
+os demais permanecem na auditoria, mas nao no sorteio. Nenhuma dessas decisoes
+altera o Parquet original. Antes de cada sorteio, revisar o cadastro e congelar
+sua copia e hash na pasta da execucao. Uma mudanca posterior exige nova execucao,
+sem substituir silenciosamente unidades da amostra anterior.
 
 ## Caracterizacao inicial dos canais mantidos
 
@@ -165,14 +169,12 @@ resolvidos. A rotina atual de scoring tem outra coluna,
 ou `mention_count > 0`; isso nao prova equivalencia com a estatistica historica.
 O criterio 500/5 da Etapa 2 nao e alterado nem reaplicado nesta caracterizacao.
 
-Use a concentracao da populacao `usable_human` para avaliar a alocacao de
-janelas. Se poucos canais acumularem 80% das mensagens, a alocacao proporcional
-privilegiara esses canais. Isso nao e vies para estimar uma media entre
-mensagens, mas pode fornecer cobertura insuficiente para comparacoes entre
-canais. Uma cota minima por canal combinada com alocacao proporcional do
-restante pode preservar cobertura; registre as probabilidades de inclusao e
-os pesos quando o desenho for definido. Esta rotina descreve a populacao;
-nao sorteia janelas nem modifica sua selecao.
+Na caracterizacao atual, 46 canais concentram aproximadamente 80% das mensagens
+humanas utilizaveis. Por isso, o desenho abaixo nao aloca janelas
+proporcionalmente ao volume bruto do corpus. Usa cotas iguais por combinacao de
+servidor e porte de canal, preservando cobertura de todos os estratos nao vazios.
+A caracterizacao continua apenas descritiva; o sorteio e realizado pelo modulo
+Python `discord_disentanglement.sampling`.
 
 ## Qual parametro a amostra estima
 
@@ -195,6 +197,10 @@ antecedente, a frequencia de replies nativos e a taxa de ambiguidade. A formula
 para proporcoes abaixo e apropriada para cada uma dessas medidas binarias.
 
 ## Tamanho nominal por canal
+
+Esta secao fornece referencias sob amostragem aleatoria simples, nao determina
+as cotas do piloto hierarquico. A quantidade final depende do piloto, do custo
+de anotacao e da dependencia observada entre mensagens e janelas.
 
 Para estimar uma proporcao em um canal com confianca de 95% e margem de erro
 absoluta $e$, sob amostragem aleatoria simples de mensagens independentes, use:
@@ -259,37 +265,178 @@ o tamanho efetivo seria aproximadamente 151; com $\rho = 0{,}02$, cerca de
 101. Esses valores sao ilustrativos: $\rho$ deve ser estimado no piloto, nao
 assumido como resultado do dataset.
 
-Consequentemente, tres janelas de 100 sao uma boa meta operacional inicial de
+Consequentemente, tres janelas de 100 sao uma meta operacional inicial de
 cobertura, mas nao devem ser apresentadas como garantia de precisao de
-$\pm6$ pontos percentuais. A precisao deve ser estimada depois, por bootstrap
-agrupado por janela ou por canal.
+$\pm6$ pontos percentuais. A precisao deve ser avaliada com estimadores
+compativeis com os estratos, probabilidades e tres estagios do desenho.
+Bootstrap de mensagens independentes, ou de janelas sem respeitar a hierarquia,
+nao substitui replicacao nos estagios nao censitarios. A auditoria abaixo
+identifica onde essa replicacao ainda falta no piloto.
 
-## Desenho recomendado dos intervalos
+## 3.2. Desenho hierarquico e estratificado executavel
 
-Para cada canal A com adequacao conversacional e elegibilidade:
+O sorteio esta em `discord_disentanglement/sampling.py`; a auditoria estatistica
+e de adequacao das janelas esta em `discord_disentanglement/sampling_audit.py`.
+Os testes executaveis estao em `tests/test_sampling.py`. Nao ha sorteio manual
+ou calculo que dependa de um comando avulso fora desses arquivos Python.
 
-1. determine a meta nominal com a correcao de populacao finita;
-2. divida o periodo do export em estratos temporais de tamanho semelhante, por
-   exemplo tercis ou meses;
-3. sorteie pelo menos uma janela em cada estrato, sem sobrepor mensagens-alvo;
-4. distribua a meta entre os estratos de forma aproximadamente proporcional;
-5. preserve uma semente, o quadro amostral congelado e os IDs das mensagens
-   inicialmente selecionadas;
-6. acrescente mensagens anteriores como contexto, sem contá-las como mensagens
-   anotadas da amostra.
+Os servidores retidos sao fixos: probabilidade 1, condicionada a este quadro.
+Nao se pretende representar todos os servidores Discord. Os tres sorteios sao
+aleatorios simples, sem reposicao:
 
-Para a primeira rodada, tres janelas de 100 mensagens-alvo em tempos distintos
-sao apropriadas quando a meta for aproximadamente 267. Quando for necessario
-sustentar uma inferencia mais precisa, prefira mais janelas menores e
-espacadas, como 6 a 10 janelas de 30 a 50 mensagens-alvo. Isso reduz a
-correlacao dentro de cada intervalo e aumenta a cobertura de diferentes
-periodos de atividade.
+1. **Canais dentro dos servidores:** estratos `guild_id x size_stratum`, com
+   cota igual em cada estrato nao vazio. Porte e definido pelo volume humano
+   utilizavel da caracterizacao: `small` ate 1.000, `medium` de 1.001 a 10.000,
+   `large` acima de 10.000. Os limites sao parametros operacionais ajustaveis,
+   nao categorias naturais inferidas dos dados. O padrao sorteia ate 2 canais
+   por estrato, ou realiza censo quando houver menos.
+2. **Periodos dentro dos canais:** ate 3 meses-calendario UTC distintos,
+   uniformemente entre os meses com pelo menos uma mensagem-alvo valida.
+   Meses sem atividade elegivel nao sao unidades do quadro. O sorteio mensal
+   nao garante cobertura de cada tercil do historico.
+3. **Janelas dentro dos periodos:** 1 janela por mes sorteado. Cada mes e
+   particionado cronologicamente em blocos nao sobrepostos de ate 100
+   mensagens-alvo. O ultimo bloco, mesmo incompleto, participa do sorteio:
+   descarta-lo deixaria mensagens com probabilidade zero.
 
-As janelas devem ser selecionadas por tempo, nao apenas pelas primeiras
-mensagens do canal. Amostrar somente o inicio do historico favorece uma fase
-particular da comunidade; amostrar somente o fim favorece eventos recentes.
-A estratificacao temporal reduz esse vies sem destruir o contexto local que a
-anotacao de conversas exige.
+As cotas e tamanhos acima sao padroes do piloto, nao um tamanho amostral final
+nem garantia de precisao estatistica. Canais sem mensagens tecnicamente validas
+permanecem no cadastro com `technical_status = no_valid_targets`, sem participar
+do denominador do sorteio de canais. Nao ha reposicao entre estratos.
+
+Mensagens-alvo exigem conteudo segundo `payload_v2`, `is_bot = false`, IDs de
+servidor, canal, mensagem e autor nao vazios, timestamp UTC valido e unicidade
+de `(guild_id, message_id)` no corpus. Todas as ocorrencias duplicadas dessa
+chave sao excluidas do quadro tecnico, nao apenas uma delas. As restricoes
+tecnicas nao redefinem o volume utilizavel da caracterizacao.
+
+Cada janela inclui ate 200 registros anteriores validos do mesmo canal como
+contexto, inclusive de meses anteriores. Bots e outros registros nao alvo
+entre a primeira e a ultima mensagem-alvo tambem sao preservados como contexto.
+Por isso, a contagem total de contexto pode exceder 200. Contexto pode se
+sobrepor entre janelas, mas nunca aumenta a contagem de mensagens-alvo.
+
+Para um canal de um estrato com $N_h$ canais e $n_h$ sorteados, um canal com
+$M_c$ meses ativos e $m_c$ sorteados, e um mes com $W_{ct}$ janelas e $w_{ct}$
+sorteadas, a probabilidade marginal de uma janela e:
+
+$$
+\pi_{ctj} = \frac{n_h}{N_h}\frac{m_c}{M_c}\frac{w_{ct}}{W_{ct}},
+\qquad d_{ctj} = \frac{1}{\pi_{ctj}}.
+$$
+
+Cada mensagem-alvo pertence a um unico bloco e recebe a mesma probabilidade e
+peso desse bloco. Esses pesos permitem estimar totais ou razoes entre mensagens
+do quadro tecnico; uma media entre canais requer estimador declarado proprio.
+A incerteza deve respeitar estratos e agrupamentos, nao tratar mensagens
+consecutivas como observacoes independentes. Para pertencimentos de contexto,
+`target_inclusion_probability` fica ausente: nao e probabilidade de visualizacao.
+
+### Executar e conferir
+
+Na raiz do projeto, com o ambiente Python instalado:
+
+```powershell
+python -m discord_disentanglement.sampling prepare-frame
+python -m discord_disentanglement.sampling draw
+python -m pytest tests/test_sampling.py -q
+```
+
+O primeiro comando cria o cadastro separado com todos os canais como
+`provisional_eligible` e recusa sobrescrita. Revise os estados e motivos nesse
+CSV antes de sortear. O segundo usa os caminhos padrao da caracterizacao e
+salva em `data/processed/disentanglement/sampling_pilot_v1`. Uma nova execucao
+exige diretorio novo; nenhum resultado anterior e sobrescrito.
+
+Todos os parametros sao verificaveis com `--help`. Exemplo explicito:
+
+```powershell
+python -m discord_disentanglement.sampling draw `
+  --frame annotations/disentanglement_channel_frame.csv `
+  --output data/processed/disentanglement/sampling_pilot_v2 `
+  --seed 20261014 `
+  --channels-per-stratum 2 `
+  --periods-per-channel 3 `
+  --windows-per-period 1 `
+  --target-messages 100 `
+  --context-messages 200 `
+  --memory-limit 2GB
+```
+
+| Artefato | Conferencia |
+| --- | --- |
+| `channel_frame.csv` | Copia exata do cadastro de elegibilidade usado. |
+| `channel_selection.csv` | Todos os canais do cadastro, disponibilidade tecnica, selecao, denominadores e probabilidade do primeiro nivel. |
+| `window_frame.csv` | Quadro de blocos tecnicos do Parquet, inclusive canais fora da elegibilidade atual; juntar ao cadastro para obter o quadro elegivel. |
+| `period_selection.csv` | Meses candidatos nos canais sorteados, indicacao de selecao e probabilidades condicionais. |
+| `selected_windows.csv` | IDs, limites temporais e posicionais, contagens, semente, tres probabilidades, produto e peso final. |
+| `sampled_messages.parquet` | Registros originais por pertencimento a janela, papel contexto/alvo e probabilidades de alvo. |
+| `annotation_windows.csv` | Janelas com `messages_json`, compativeis com `build-annotation-bundle`. |
+| `manifest.json` | Definicoes, parametros, contagens, versoes e hashes da entrada, implementacao, cadastro e saidas. |
+
+O DuckDB usa banco temporario em disco, removido ao terminar. O limite de memoria
+nao inclui toda a memoria do Python; reserve tambem espaco para spill. O sorteio
+nao usa replies nativos nem resultados de anotacao para definir fronteiras.
+
+### Auditoria do desenho amostral
+
+O desenho foi investigado antes de acrescentar filtros ou refazer a amostra.
+O relatorio completo, gerado exclusivamente pelo arquivo Python de auditoria,
+esta em [SAMPLING_DESIGN_AUDIT.md](SAMPLING_DESIGN_AUDIT.md). A execucao completa
+vigente esta em `data/processed/disentanglement/sampling_design_audit_v3`, com
+manifesto e hashes de cada saida. O cadastro e o piloto original foram mantidos.
+
+O relato dos experimentos, cenarios sinteticos, nove testes automatizados,
+achados do piloto e correcoes tecnicas esta em
+[SAMPLING_EXPERIMENTS.md](SAMPLING_EXPERIMENTS.md). Esse relato distingue os
+testes de software das verificacoes da amostra real e explicita os limites
+de cada evidencia.
+
+As verificacoes cobrem hashes, reproducao da semente, denominadores
+recalculados independentemente, positividade, cotas dos tres niveis, pesos,
+unicidade e nao sobreposicao de alvos e correspondencia dos blocos com o censo
+tecnico do Parquet. As 38 verificacoes passaram. Isso sustenta a implementacao
+do mecanismo probabilistico, nao prova que os cortes ou cotas sao otimos.
+
+| Questao | Evidencia do piloto | Interpretacao |
+| --- | --- | --- |
+| Estratos | 75 combinacoes servidor x porte; 27 censitarias no nivel dos canais; sensibilidade a metade/dobro dos cortes e tercis documentada. | Cobertura e probabilidades conhecidas, mas cortes ainda operacionais; nao substitui-los apenas por equilibrio visual. |
+| Distribuicao de janelas | 275 incompletas, contra 271,00 esperadas e DP de 7,37 sob o desenho. | Resultado esperado da selecao uniforme de meses e preservacao das caudas, nao falha de sorteio. |
+| Duracao | Mediana de 143,61 horas entre alvos; 283 janelas acima de 24 horas e 186 acima de sete dias. | Contagem fixa nao garante episodio conversacional compacto; requer avaliacao humana, nao corte temporal automatico. |
+| Entrelacamento observavel | 162 janelas com componentes nativos intercalados; 133 com arestas nativas cruzadas. | Proxies esparsos, nao rotulos semanticos nem criterio de elegibilidade. |
+| Contexto | 200 registros anteriores mostram 2.991 de 3.006 antecedentes nativos resolvidos elegiveis (99,50%); 400 mostram 2.993. | Nao ha justificativa observada para dobrar contexto automaticamente; nao mede cobertura semantica desconhecida. |
+| Incerteza | 148 meses com multiplos blocos disponiveis e somente uma janela sorteada. | Falta replicacao para estimar diretamente a variancia dentro desses meses sem suposicoes adicionais. |
+
+Os pesos sao heterogeneos. Para o total conhecido de 11.884.832 mensagens-alvo
+tecnicas, a estimativa Horvitz-Thompson desta realizacao e 18.888.286, com DP
+exato do desenho de 4.760.858,14. O desvio de 1,471 DP e apenas descritivo, nao
+p-valor nem certificacao de ausencia de vies. A variabilidade e relevante para
+inferencias; essa conta auxiliar nao estima a precisao de arestas semanticas,
+toxicidade ou desempenho de modelos. O tamanho de Kish baseado apenas em pesos
+tambem nao deve ser confundido com tamanho efetivo apos conglomeracao temporal.
+
+**Decisoes nesta etapa:** nao excluir caudas curtas, canais esparsos, janelas
+longas ou casos sem reply nativo. Nao trocar os cortes de porte, aumentar
+contexto ou refazer o sorteio automaticamente. Declarar o estimando e a forma
+de ponderacao; se inferencia design-based com intervalos for requisito, rever
+a replicacao de janelas por mes e o orcamento antes de uma nova rodada.
+A adequacao semantica permanece pendente do piloto humano, incluindo casos
+completos/incompletos e diferentes duracoes, sem remover os casos negativos.
+
+Para reproduzir em nova pasta e regenerar explicitamente o documento:
+
+```powershell
+python -m discord_disentanglement.sampling_audit `
+   --output data/processed/disentanglement/sampling_design_audit_v4 `
+   --overwrite-report
+python -m pytest tests/test_sampling.py -q
+```
+
+O gerador recusa substituir diretorios de auditoria e verifica os hashes do
+piloto antes de calcular. As saidas detalham probabilidades de todo o quadro,
+alocacao por servidor/canal/porte/mes, sensibilidade dos cortes, duracao e autores
+por janela, componentes e arestas nativas observadas, antecedentes nao visiveis,
+sensibilidade de contexto e variancia exata de totais auxiliares conhecidos.
 
 ## Relacao com a ferramenta de anotacao
 
@@ -309,12 +456,10 @@ discord-disentangle gold-standard `
   --context-message-count 200
 ```
 
-A implementacao atual particiona todos os canais do escopo em janelas
-cronologicas sucessivas. Para aplicar o desenho estatistico acima, a selecao
-das janelas deve ser registrada antes da anotacao: gerar o conjunto de janelas,
-escolher as janelas sorteadas conforme seus timestamps e encaminhar somente
-essas janelas para a anotacao. O arquivo de selecao deve preservar IDs de
-janela, estrato temporal, semente e justificativa para qualquer substituicao.
+Esse comando legado enumera janelas sucessivas, mas nao faz sorteio
+probabilistico. Para o desenho da secao 3.2, use `sampling draw` e encaminhe seu
+`annotation_windows.csv` ao comando `build-annotation-bundle`. A selecao e suas
+probabilidades ja estarao registradas antes da anotacao.
 
 ## Piloto, recalibracao e relato
 
@@ -328,9 +473,10 @@ um efeito de desenho observado.
 O relatorio final deve informar o canal, seu tamanho populacional $N$, classe,
 periodo coberto, meta nominal, correcao finita, numero de janelas, mensagens
 alvo anotadas, mensagens de contexto, distribuicao temporal, criterios de
-substituicao e taxa de conclusao. Para estimativas agregadas entre canais, use
-pesos proporcionais ao tamanho do canal ou declare explicitamente que a analise
-estima a media entre canais, nao a media entre mensagens do corpus.
+substituicao e taxa de conclusao. Para estimativas agregadas entre mensagens,
+use os pesos inversos das probabilidades efetivas do desenho, nao apenas pesos
+proporcionais ao tamanho do canal. Declare separadamente estimadores de medias
+entre canais e de medias entre mensagens, alem do tratamento da nao resposta.
 
 O resultado esperado e um dataset com contexto suficiente para anotar arestas
 semanticas e com justificativa estatistica transparente para a quantidade e a
