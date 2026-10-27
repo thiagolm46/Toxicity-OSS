@@ -17,15 +17,14 @@ Registro: [SERVER_FILTERING_STAGE.md](SERVER_FILTERING_STAGE.md).
 
 ## 2. Selecionar Canais
 
-A execucao historica combinou a lista manual com exclusao por
-`total_messages < 500 AND interacting_authors < 5`. O resultado e de 407
-canais e 11.918.028 registros. O scoring A-D de canais disponivel no motor
+O filtro combina a lista manual com exclusao por
+`total_messages < 500 OR distinct_human_authors < 5`. O resultado e de 297
+canais, 29 servidores e 11.897.859 registros. O scoring A-D disponivel no motor
 nao produziu esse corpus e nao e uma etapa adicional obrigatoria.
 
-Os valores e decisoes historicos sao preservados em pacote verificavel.
-A definicao original de `interacting_authors` nao foi recuperada: o replay
-e condicionado aos valores congelados, nao uma reconstrucao integral a partir
-das mensagens. Essa metrica nao e requisito novo para sortear janelas.
+As duas contagens sao calculadas diretamente das mensagens originais.
+Participantes sao IDs distintos de autores explicitamente nao-bot, sem condicao
+de reply ou mencao. As execucoes anteriores sao somente arquivo historico.
 
 Registro: [CHANNEL_SELECTION_STAGE.md](CHANNEL_SELECTION_STAGE.md).
 
@@ -41,9 +40,9 @@ dos meses, sem reposicao. Preserva probabilidades, pesos, semente, contexto
 anterior e registros intervenientes; nao infere conversas nem usa predicoes.
 
 `audit-sampling` verifica os artefatos congelados, sem filtrar ou substituir
-janelas. A execucao vigente e `sampling_pilot_v1`, com auditoria
-`sampling_design_audit_v3`. O sorteio piloto produziu 132 canais, 390 janelas
-e 18.012 alvos. Testes e auditoria de probabilidades nao demonstram, por si,
+janelas. A execucao vigente e `sampling_participants_v2`, com auditoria
+`sampling_participants_audit_v2`. O sorteio piloto produziu 107 canais, 317 janelas
+e 17.921 alvos. Testes e auditoria de probabilidades nao demonstram, por si,
 adequacao semantica ou acordo entre anotadores.
 
 Registros: [DISENTANGLEMENT_SAMPLING.md](DISENTANGLEMENT_SAMPLING.md),

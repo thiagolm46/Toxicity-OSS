@@ -421,7 +421,6 @@ def _conversation_suitability(
     n_bot_messages: int,
     total_messages: int,
     interaction_message_count: int,
-    interacting_human_user_count: int,
     author_transition_ratio: float,
     dominant_author_ratio: float,
     profile: FilterProfile,
@@ -442,8 +441,6 @@ def _conversation_suitability(
         reasons.append("insufficient_human_users")
     if interaction_ratio < policy.min_interaction_ratio:
         reasons.append("low_interaction")
-    if interacting_human_user_count < policy.min_interacting_human_users:
-        reasons.append("insufficient_interacting_human_users")
     if author_transition_ratio < policy.min_author_transition_ratio:
         reasons.append("low_author_turn_taking")
     if dominant_author_ratio > policy.max_dominant_author_ratio:
@@ -501,7 +498,6 @@ def score_channel(
     interaction_message_count = 0
     valid_native_reply_message_count = 0
     mention_interaction_message_count = 0
-    interacting_human_users: set[str] = set()
     human_authors_in_order: list[str] = []
     if messages is None:
         n_messages = _nonnegative_int(record.get("n_messages"))
@@ -511,7 +507,6 @@ def score_channel(
         interaction_message_count = _nonnegative_int(record.get("interaction_message_count"))
         valid_native_reply_message_count = _nonnegative_int(record.get("valid_native_reply_message_count"))
         mention_interaction_message_count = _nonnegative_int(record.get("mention_interaction_message_count"))
-        interacting_human_user_count = _nonnegative_int(record.get("interacting_human_user_count"))
         author_transition_ratio = _bounded_ratio(record.get("author_transition_ratio"))
         dominant_author_ratio = _bounded_ratio(record.get("dominant_author_ratio"))
         for signal in policy.signals:
@@ -548,8 +543,6 @@ def score_channel(
                 mention_interaction_message_count += 1
             if valid_reply or mentioned_user:
                 interaction_message_count += 1
-                if author:
-                    interacting_human_users.add(author)
             message_id = _message_id(message)
             if message_id:
                 previous_human_message_ids.add(message_id)
@@ -572,7 +565,6 @@ def score_channel(
         n_users = len(users)
 
     if messages is not None:
-        interacting_human_user_count = len(interacting_human_users)
         author_counts = Counter(human_authors_in_order)
         dominant_author_ratio = max(author_counts.values(), default=0) / len(human_authors_in_order) if human_authors_in_order else 0.0
         transitions = sum(
@@ -619,7 +611,6 @@ def score_channel(
         n_bot_messages=n_bot_messages,
         total_messages=total_messages,
         interaction_message_count=interaction_message_count,
-        interacting_human_user_count=interacting_human_user_count,
         author_transition_ratio=author_transition_ratio,
         dominant_author_ratio=dominant_author_ratio,
         profile=profile,
@@ -640,7 +631,6 @@ def score_channel(
         interaction_message_count=interaction_message_count,
         valid_native_reply_message_count=valid_native_reply_message_count,
         mention_interaction_message_count=mention_interaction_message_count,
-        interacting_human_user_count=interacting_human_user_count,
         interaction_ratio=interaction_ratio,
         author_transition_ratio=round(author_transition_ratio, 6),
         dominant_author_ratio=round(dominant_author_ratio, 6),

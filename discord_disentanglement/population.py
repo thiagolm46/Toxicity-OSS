@@ -9,11 +9,12 @@ from pathlib import Path
 import duckdb
 
 from discord_filtering.storage import atomic_write_bytes, sha256_file
+from discord_filtering.channel_selection import DEFAULT_OUTPUT as DEFAULT_SELECTION
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT = ROOT / "data/processed/filtering/software/affinity_v2/messages_2026-10-07_excluded_channels_min500_interacting5.parquet"
-DEFAULT_OUTPUT = ROOT / "data/processed/disentanglement/population_payload_v2"
+DEFAULT_INPUT = DEFAULT_SELECTION / "messages.parquet"
+DEFAULT_OUTPUT = ROOT / "data/processed/disentanglement/population_participants_v2"
 REQUIRED_COLUMNS = {
     "guild_id", "guild_name", "channel_id", "channel_name", "message_id",
     "author_id", "timestamp", "is_bot", "message_type", "content",
@@ -116,9 +117,7 @@ def characterize_population(
                        epoch(child.sent_at - parent.sent_at) AS seconds_distance,
                        CASE WHEN child.usable AND parent.usable
                             THEN child.usable_position - parent.usable_position END
-                            AS usable_position_distance,
-                       child.usable AND parent.usable
-                           AND child.author_id <> parent.author_id AS human_interaction
+                            AS usable_position_distance
                 FROM ordered child
                 LEFT JOIN ordered parent ON parent.message_id = child.parent_id
                     AND parent.guild_id = coalesce(child.parent_guild_id, child.guild_id)
@@ -167,20 +166,8 @@ def characterize_population(
                        min(channel_name) AS channel_name, {metrics}
                 FROM records GROUP BY guild_id, channel_id
             """)
-            connection.execute("""
-                CREATE TABLE channel_report AS
-                SELECT metrics.*, coalesce(interactions.native_reply_interacting_authors, 0)
-                    AS native_reply_interacting_authors
-                FROM channel_metrics metrics
-                LEFT JOIN (
-                    SELECT guild_id, channel_id, count(DISTINCT author_id)
-                        AS native_reply_interacting_authors
-                    FROM replies WHERE status = 'resolved' AND human_interaction
-                    GROUP BY guild_id, channel_id
-                ) interactions USING (guild_id, channel_id)
-            """)
             queries = {
-                "channels.csv": "SELECT * FROM channel_report ORDER BY total_records DESC, guild_id, channel_id",
+                "channels.csv": "SELECT * FROM channel_metrics ORDER BY total_records DESC, guild_id, channel_id",
                 "servers.csv": f"SELECT guild_id, min(guild_name) AS guild_name, count(DISTINCT channel_id) AS channels, {metrics} FROM records GROUP BY guild_id ORDER BY total_records DESC, guild_id",
                 "temporal_activity.csv": """
                     SELECT guild_id, channel_id, 'month' AS temporal_unit,
@@ -280,8 +267,7 @@ def characterize_population(
                 "unusable_records": "empty/blank text with no recorded attachment, embed or sticker; the only unusability criterion",
                 "human_messages_with_structural_issues": "human messages with payload but missing guild/channel/message/author ID, invalid timestamp or duplicate (guild_id,message_id); separate from unusability",
                 "native_reply": "message_type=19 and nonempty referenced_message_id; other references are counted separately",
-                "native_reply_interacting_authors": "distinct usable source authors replying to a preceding usable message by another human in the same guild/channel; receivers alone are not counted; mentions are not counted",
-                "legacy_interacting_authors": "not reconstructed: original profile-channels implementation is absent; interaction_scope=human_messages alone does not specify the predicate",
+                "participants": "distinct nonblank author_id among messages with is_bot explicitly false, without requiring replies or mentions",
                 "distance": "source minus parent: seconds and positions in valid uniquely identified timestamped channel records; separate usable-only positions for pairs of usable messages; UTC order then lexical message_id ties",
                 "missing_parent": "not found among uniquely identified timestamped records in this export; not proof of deletion",
                 "missing_payload": "empty/blank text with no attachment, embed or sticker; empty text alone is not unusable",

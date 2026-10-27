@@ -287,7 +287,6 @@ $$
 ```json
 {
   "min_human_users": 5,
-  "min_interacting_human_users": 3,
   "min_interaction_ratio": 0.05,
   "min_author_transition_ratio": 0.2,
   "max_dominant_author_ratio": 0.7,

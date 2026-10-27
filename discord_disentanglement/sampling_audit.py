@@ -18,7 +18,7 @@ from discord_disentanglement.sampling import CHANNEL_KEY, DEFAULT_SAMPLE, INCLUD
 from discord_filtering.storage import atomic_write_bytes, sha256_file
 
 
-DEFAULT_AUDIT = ROOT / "data/processed/disentanglement/sampling_design_audit_v3"
+DEFAULT_AUDIT = ROOT / "data/processed/disentanglement/sampling_participants_audit_v2"
 DEFAULT_REPORT = ROOT / "docs/methodology/SAMPLING_DESIGN_AUDIT.md"
 
 

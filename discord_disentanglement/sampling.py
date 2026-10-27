@@ -33,8 +33,8 @@ INCLUDED_STATUSES = {"provisional_eligible", "eligible"}
 CHANNEL_KEY = ["guild_id", "channel_id"]
 PERIOD_KEY = [*CHANNEL_KEY, "period"]
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_FRAME = ROOT / "annotations/disentanglement_channel_frame.csv"
-DEFAULT_SAMPLE = ROOT / "data/processed/disentanglement/sampling_pilot_v1"
+DEFAULT_FRAME = ROOT / "annotations/channel_frame_participants_v2.csv"
+DEFAULT_SAMPLE = ROOT / "data/processed/disentanglement/sampling_participants_v2"
 
 
 def prepare_channel_frame(
@@ -62,7 +62,7 @@ def prepare_channel_frame(
     frame["small_max"] = small_max
     frame["medium_max"] = medium_max
     frame["eligibility_status"] = "provisional_eligible"
-    frame["eligibility_reason"] = "Awaiting scope review; original retained-channel frame"
+    frame["eligibility_reason"] = "Awaiting scope review; participant-count selection"
     _validate_channel_frame(frame)
     output.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(output, index=False)

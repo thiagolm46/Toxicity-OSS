@@ -20,16 +20,16 @@ O registro vigente, as limitacoes da revisao e os artefatos estao em
 
 ## Etapa 2: Canais
 
-A selecao final usou uma lista exata de nomes a excluir e a regra historica
-`total_messages < 500 AND interacting_authors < 5`. Nao foi produzida pelo
-scoring generico A-D. A triagem exploratoria 552/3 nao foi uma mascara anterior
-a regra final. Justificativa estatistica para essa mudanca e o predicado
-original de autores interagentes nao foram recuperados.
+A selecao vigente exige pelo menos 500 registros brutos e cinco autores humanos
+distintos por canal, alem de nome fora da lista manual. Ela recalcula as duas
+contagens diretamente da fonte original, sem exigir replies ou mencoes e sem
+inferir conversas. Excluir quando qualquer um dos minimos nao for alcancado
+equivale a usar OR nos criterios de exclusao.
 
-O pacote [historico](../../annotations/channel_selection_2026-10-07/manifest.json)
-preserva os valores e decisoes para replay e auditoria. Isso nao reconstitui
-o calculo da metrica a partir das mensagens nem razoes humanas nao registradas.
-O corpus preservado contem 407 canais e 11.918.028 registros.
+O corpus `participants_v2` contem 297 canais, 29 servidores e 11.897.859
+registros. Nao foi produzido pelo scoring generico A-D. Os limiares sao
+operacionais, nao calibrados como garantia de relevancia. As razoes individuais
+da lista manual herdada continuam nao registradas.
 
 Procedimento e comandos: [CHANNEL_SELECTION_STAGE.md](CHANNEL_SELECTION_STAGE.md).
 O schema dos perfis reutilizados esta em

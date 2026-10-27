@@ -32,13 +32,15 @@ sorteio e conter, para cada canal:
 - classe do canal, escore e status de elegibilidade;
 - identificadores e timestamps das mensagens em ordem cronologica.
 
-O quadro atual mantem provisoriamente os 407 canais retidos na Etapa 2.
+O quadro atual mantem provisoriamente os 297 canais retidos na Etapa 2,
+em 29 servidores, com pelo menos 500 registros brutos e cinco autores humanos
+distintos por canal.
 A inclusao de canais com conversas paralelas ao desenvolvimento de software
 aguarda orientacao; nao se aplica agora uma nova restricao automatica a canais
 de classe A. Canais com poucos dados nao sao considerados irrelevantes apenas
 por terem baixo volume.
 
-O cadastro separado `annotations/disentanglement_channel_frame.csv` registra
+O cadastro separado `annotations/channel_frame_participants_v2.csv` registra
 `provisional_eligible`, `eligible`, `pending_review` ou `excluded`, com motivo
 em `eligibility_reason`. Os dois primeiros estados participam do piloto;
 os demais permanecem na auditoria, mas nao no sorteio. Nenhuma dessas decisoes
@@ -54,10 +56,9 @@ Antes de sortear janelas, execute a caracterizacao da populacao congelada:
 python -m discord_disentanglement.population
 ```
 
-O padrao le o Parquet da Etapa 2 com sufixo
-`excluded_channels_min500_interacting5` e escreve em
-`data/processed/disentanglement/population_payload_v2`. Os artefatos iniciais
-em `data/processed/disentanglement/population` preservam a definicao anterior.
+O padrao le `data/processed/filtering/software/participants_v2/messages.parquet`
+e escreve em `data/processed/disentanglement/population_participants_v2`.
+As execucoes anteriores sao somente arquivo historico.
 Para outro corpus:
 
 ```powershell
@@ -145,36 +146,23 @@ Mensagens ausentes do proprio export nao podem ser quantificadas sem uma fonte
 externa; a rotina mede campos ausentes, payload indisponivel e antecedentes
 nao localizados no corpus.
 
-### Definicao operacional de autores interagentes
+### Definicao operacional de participantes
 
-Nao confundir tres medidas:
+Usamos duas contagens explicitas:
 
 - `distinct_human_authors`: autores distintos com pelo menos um registro
    explicitamente nao-bot, mesmo que esse registro nao seja utilizavel;
-- `distinct_usable_human_authors`: autores distintos no quadro utilizavel;
-- `native_reply_interacting_authors`: autores distintos de mensagens humanas
-   utilizaveis que enviaram ao menos um native reply a mensagem anterior
-   utilizavel de **outro autor**, no mesmo servidor e canal. Conta emissores;
-   nao conta destinatarios apenas por receberem reply, nem mencoes, replies a si
-   proprio ou antecedentes fora do corpus.
+- `distinct_usable_human_authors`: autores distintos com ao menos uma mensagem
+   com conteudo registrado.
 
-A ultima e uma definicao nova, explicita e conservadora, diferente da coluna
-historica `interacting_authors`. A [auditoria de reconstrucao](INTERACTING_AUTHORS_AUDIT.md)
-comparou sete predicados na fonte original: emissores humanos distintos de
-replies resolvidos a mensagens humanas anteriores no mesmo canal, ou de
-mensagens com `mention_count > 0`, reproduziram todos os 689 valores
-historicos. Essa regra aceita autorrespostas e mencoes sem validar o tipo do
-destinatario; nao exige conteudo utilizavel. Portanto, nao equivale a
-`native_reply_interacting_authors`.
+A selecao usa a primeira contagem, sem exigir replies ou mencoes; a segunda
+caracteriza a disponibilidade de conteudo. Nao inferimos conversas antes da
+anotacao. Contamos contas humanas observadas por canal, nao pessoas verificadas.
+Excluir canais com menos de 500 registros OU menos de cinco participantes
+exige ambos os minimos para permanencia. A selecao, a populacao, o quadro e o
+sorteio foram reexecutados em diretorios novos.
 
-A implementacao antiga continua ausente. A igualdade e uma reconstrucao
-empiricamente verificada nesse snapshot, nao prova da identidade do codigo
-original nem validade semantica da metrica. A rotina atual de scoring tem
-outra coluna, `interacting_human_user_count`, com logica proxima; sua existencia
-isolada nao era suficiente para demonstrar equivalencia. O criterio 500/5,
-o corpus e a amostra nao foram alterados durante a auditoria.
-
-Na caracterizacao atual, 46 canais concentram aproximadamente 80% das mensagens
+Na caracterizacao atual, 45 canais concentram pelo menos 80% das mensagens
 humanas utilizaveis. Por isso, o desenho abaixo nao aloca janelas
 proporcionalmente ao volume bruto do corpus. Usa cotas iguais por combinacao de
 servidor e porte de canal, preservando cobertura de todos os estratos nao vazios.
@@ -350,7 +338,7 @@ python -m pytest tests/test_sampling.py -q
 O primeiro comando cria o cadastro separado com todos os canais como
 `provisional_eligible` e recusa sobrescrita. Revise os estados e motivos nesse
 CSV antes de sortear. O segundo usa os caminhos padrao da caracterizacao e
-salva em `data/processed/disentanglement/sampling_pilot_v1`. Uma nova execucao
+salva em `data/processed/disentanglement/sampling_participants_v2`. Uma nova execucao
 exige diretorio novo; nenhum resultado anterior e sobrescrito.
 
 Todos os parametros sao verificaveis com `--help`. Exemplo explicito:
@@ -358,7 +346,7 @@ Todos os parametros sao verificaveis com `--help`. Exemplo explicito:
 ```powershell
 python -m discord_disentanglement.sampling draw `
   --frame annotations/disentanglement_channel_frame.csv `
-  --output data/processed/disentanglement/sampling_pilot_v2 `
+   --output <nova_amostra> `
   --seed 20261014 `
   --channels-per-stratum 2 `
   --periods-per-channel 3 `
@@ -388,7 +376,7 @@ nao usa replies nativos nem resultados de anotacao para definir fronteiras.
 O desenho foi investigado antes de acrescentar filtros ou refazer a amostra.
 O relatorio completo, gerado exclusivamente pelo arquivo Python de auditoria,
 esta em [SAMPLING_DESIGN_AUDIT.md](SAMPLING_DESIGN_AUDIT.md). A execucao completa
-vigente esta em `data/processed/disentanglement/sampling_design_audit_v3`, com
+vigente esta em `data/processed/disentanglement/sampling_participants_audit_v2`, com
 manifesto e hashes de cada saida. O cadastro e o piloto original foram mantidos.
 
 O relato dos experimentos, cenarios sinteticos, nove testes automatizados,
@@ -432,7 +420,7 @@ Para reproduzir em nova pasta e regenerar explicitamente o documento:
 
 ```powershell
 python -m discord_disentanglement.sampling_audit `
-   --output data/processed/disentanglement/sampling_design_audit_v4 `
+   --output <nova_auditoria> `
    --overwrite-report
 python -m pytest tests/test_sampling.py -q
 ```

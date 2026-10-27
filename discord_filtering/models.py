@@ -91,7 +91,6 @@ class ChannelClassificationPolicy:
 @dataclass(frozen=True, slots=True)
 class ConversationSuitabilityPolicy:
     min_human_users: int
-    min_interacting_human_users: int
     min_interaction_ratio: float
     min_author_transition_ratio: float
     max_dominant_author_ratio: float
@@ -293,7 +292,6 @@ class ChannelClassification:
     interaction_message_count: int
     valid_native_reply_message_count: int
     mention_interaction_message_count: int
-    interacting_human_user_count: int
     interaction_ratio: float
     author_transition_ratio: float
     dominant_author_ratio: float
@@ -345,7 +343,6 @@ class ChannelClassification:
             "interaction_message_count": self.interaction_message_count,
             "valid_native_reply_message_count": self.valid_native_reply_message_count,
             "mention_interaction_message_count": self.mention_interaction_message_count,
-            "interacting_human_user_count": self.interacting_human_user_count,
             "interaction_ratio": self.interaction_ratio,
             "author_transition_ratio": self.author_transition_ratio,
             "dominant_author_ratio": self.dominant_author_ratio,

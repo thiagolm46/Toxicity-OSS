@@ -29,7 +29,7 @@ somente preparacao e auditoria dos dados.
 | --- | --- | --- |
 | Aquisicao e extracao | [discord_data](discord_data/__main__.py) | [Servidores](docs/methodology/SERVER_FILTERING_STAGE.md) |
 | Selecao de servidores | [discord_filtering](discord_filtering/cli.py), perfis de software | [Etapa 1](docs/methodology/SERVER_FILTERING_STAGE.md) |
-| Selecao historica de canais | [channel_selection.py](discord_filtering/channel_selection.py) | [Etapa 2](docs/methodology/CHANNEL_SELECTION_STAGE.md) |
+| Selecao por participantes | [channel_selection.py](discord_filtering/channel_selection.py) | [Etapa 2](docs/methodology/CHANNEL_SELECTION_STAGE.md) |
 | Caracterizacao da populacao | [population.py](discord_disentanglement/population.py) e [population_report.py](discord_disentanglement/population_report.py) | [Relatorio](docs/methodology/POPULATION_CHARACTERIZATION.md) |
 | Quadro e sorteio de janelas | [sampling.py](discord_disentanglement/sampling.py) | [Desenho](docs/methodology/DISENTANGLEMENT_SAMPLING.md) |
 | Auditoria da amostra | [sampling_audit.py](discord_disentanglement/sampling_audit.py) | [Auditoria](docs/methodology/SAMPLING_DESIGN_AUDIT.md) |
@@ -41,28 +41,22 @@ O detalhamento do fluxo esta em
 ## Corpus e Proveniencia
 
 O corpus atual e
-`data/processed/filtering/software/affinity_v2/messages_2026-10-07_excluded_channels_min500_interacting5.parquet`:
-31 servidores, 407 canais e 11.918.028 registros.
-Sua fonte, lista de exclusao, estatisticas e manifestos permanecem preservados.
-Nao substitua esses artefatos ao demonstrar o pipeline.
-
-A metrica historica `interacting_authors` tem valores preservados, mas definicao
-nao recuperada. O pacote versionavel em
-[annotations/channel_selection_2026-10-07](annotations/channel_selection_2026-10-07/manifest.json)
-permite replay das decisoes, nao reconstrucao integral dessa metrica:
+`data/processed/filtering/software/participants_v2/messages.parquet`:
+29 servidores, 297 canais e 11.897.859 registros.
+A selecao recalcula as estatisticas diretamente da fonte original e exige
+**pelo menos 500 registros brutos E cinco autores humanos distintos por canal**,
+alem de aplicar a lista manual de exclusao. Participacao nao exige reply,
+mencao ou conversa inferida. Os limites sao requisitos operacionais, nao uma
+garantia estatistica de qualidade.
 
 ```powershell
-python -m discord_filtering.channel_selection verify annotations/channel_selection_2026-10-07
+python -m discord_filtering.channel_selection select --output <nova_selecao>
+python -m discord_filtering.channel_selection verify <nova_selecao>
 ```
 
-Uma [auditoria adicional](docs/methodology/INTERACTING_AUTHORS_AUDIT.md)
-reproduziu os 689 valores historicos contando emissores humanos de replies
-resolvidos ou mencoes. E reconstrucao funcional verificada nesse corpus, nao
-recuperacao da rotina original. Para repetir os calculos sem alterar a selecao:
-
-```powershell
-python -m discord_filtering.interaction_audit --output <nova_auditoria>
-```
+Fonte, decisoes, contagens e hashes estao no manifesto da selecao. Os corpora
+e pacotes anteriores permanecem apenas como arquivo historico e nao alimentam
+a pipeline vigente. Nao sobrescreva essas execucoes.
 
 As mensagens brutas nao sao distribuidas pelo repositorio. Acesso e eventual
 redistribuicao devem respeitar os termos do dataset-fonte.
@@ -87,8 +81,9 @@ de uma coleta definitiva. Somente registros sem texto e sem anexo, embed ou
 sticker registrado sao chamados de nao utilizaveis. As restricoes tecnicas de
 identificacao e ordenacao para janelas sao tratadas separadamente.
 
-A execucao atual esta em `data/processed/disentanglement/sampling_pilot_v1`;
-a auditoria vigente esta em `data/processed/disentanglement/sampling_design_audit_v3`.
+A execucao atual esta em `data/processed/disentanglement/sampling_participants_v2`;
+a auditoria vigente esta em `data/processed/disentanglement/sampling_participants_audit_v2`.
+O novo sorteio produziu 107 canais, 317 janelas e 17.921 mensagens-alvo.
 Resultados de sensibilidade da auditoria nao sao experimentos de modelos.
 
 ## Preparacao para Anotacao

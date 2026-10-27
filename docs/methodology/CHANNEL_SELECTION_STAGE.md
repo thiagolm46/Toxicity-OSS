@@ -1,292 +1,113 @@
-# Etapa 2 - Selecao e Limpeza de Canais
+# Etapa 2: Selecao por Volume e Participantes
 
-## 1. Objetivo e escopo
+## Regra Vigente
 
-Esta etapa reduziu o conjunto de canais extraidos para a pesquisa de software antes da preparacao do material destinado a analise conversacional. Foram combinadas duas fontes de decisao:
+Manter um canal somente quando satisfaz simultaneamente:
 
-1. uma lista manual de nomes de canais a excluir;
-2. estatisticas por canal, usadas para excluir canais simultaneamente pequenos em volume e em participacao de autores interagentes.
+- pelo menos **500 registros de mensagens** no canal;
+- pelo menos **5 autores humanos distintos**;
+- nome fora da lista manual de exclusao.
 
-A unidade de decisao foi o canal. Quando um canal foi excluido, todas as mensagens associadas ao seu `channel_id` foram retiradas do Parquet de saida. Nenhuma mensagem foi classificada individualmente nesta operacao.
+Equivalente: excluir quando `total_messages < 500 OR distinct_human_authors < 5`,
+ou quando houver correspondencia na lista manual. Os limites sao inclusivos
+para permanencia: 500 mensagens e 5 autores passam. A unidade e o par
+`(guild_id, channel_id)`, nao uma conversa inferida.
 
-Este documento registra a execucao concluida no diretorio `affinity_v2`. Ela nao deve ser confundida com o scoring generico de relevancia tecnica A-D descrito em [DISCORD_UNVEILED_FILTERING.md](DISCORD_UNVEILED_FILTERING.md): o artefato final desta execucao foi produzido pela combinacao da lista manual e dos limites de atividade abaixo.
+Nao se usa contador de autores condicionado a replies, mencoes ou eventos de
+interacao. As execucoes anteriores sao apenas arquivo historico e nao fornecem
+estatisticas nem decisoes para esta versao.
 
-## 2. Posicao no pipeline
+## Definicoes Operacionais
 
-A etapa foi executada depois da selecao de servidores e da extracao das mensagens correspondentes. As estatisticas foram calculadas sobre esse arquivo de mensagens e serviram para apoiar a decisao sobre canais. O Parquet final e o corpus limpo para as etapas seguintes, como amostragem e preparacao de anotacao.
+`total_messages` conta todas as linhas exportadas do canal, antes de filtrar
+por conteudo ou tipo de autor. Nao e contagem deduplicada de mensagens nem
+quantidade de mensagens anotaveis. A qualidade estrutural e verificada nas
+etapas seguintes.
 
-O processo preservou os arquivos de origem. A filtragem gravou uma nova versao do corpus, acompanhada de manifesto; nao houve sobrescrita do Parquet de mensagens original.
+`distinct_human_authors` conta os valores distintos de `author_id`, convertidos
+para texto e sem espacos nas extremidades, entre registros com `is_bot = false`.
+IDs nulos/vazios sao ignorados. Bot e status de bot ausente nao sao presumidos
+humanos. Cada ID conta uma vez por canal, independentemente do numero de
+mensagens, do tipo Discord, da disponibilidade de conteudo ou de replies/mencoes.
+Contamos contas/IDs observados, nao identidades civis verificadas.
 
-## 3. Entradas e artefatos
+A lista manual usa linhas UTF-8 nao vazias com espacos externos removidos e
+correspondencia exata de `channel_name`, sensivel a maiusculas. Um nome igual
+em varios servidores exclui todos os canais correspondentes. A lista herdada
+nao preserva razoes individuais; essa limitacao permanece declarada.
 
-Todos os arquivos desta execucao estao em [`data/processed/filtering/software/affinity_v2`](../../data/processed/filtering/software/affinity_v2):
+500/5 sao requisitos operacionais de volume e participacao, nao limiares
+estatisticamente calibrados de relevancia, qualidade conversacional ou
+representatividade. Cumpri-los nao demonstra conversa semantica nem pertinencia
+de todas as mensagens a Engenharia de Software.
 
-| Artefato | Papel na etapa |
+## Implementacao e Reproducao
+
+O codigo e os calculos estao em
+[channel_selection.py](../../discord_filtering/channel_selection.py).
+Ele calcula as estatisticas diretamente da fonte de mensagens original; nao
+le a tabela de estatisticas usada pelas execucoes anteriores.
+
+```powershell
+python -m discord_filtering.channel_selection select
+python -m discord_filtering.channel_selection verify
+```
+
+A fonte e `data/processed/filtering/software/affinity_v2/messages_2026-09-21.parquet`.
+As exclusoes sao lidas de `canais_a_excluir.txt`, no mesmo diretorio.
+O destino vigente e `data/processed/filtering/software/participants_v2`.
+Para repetir, use `--output <novo_diretorio>`; o comando recusa substituir uma
+execucao existente. `--source`, `--exclusions`, `--minimum-messages`,
+`--minimum-human-authors` e `--memory-limit` sao parametros explicitos.
+
+| Arquivo | Funcao |
 | --- | --- |
-| [`messages_2026-09-21.parquet`](../../data/processed/filtering/software/affinity_v2/messages_2026-09-21.parquet) | Corpus de mensagens de entrada, com 13.275.074 linhas. |
-| [`channel_statistics_2026-09-21.parquet`](../../data/processed/filtering/software/affinity_v2/channel_statistics_2026-09-21.parquet) | Uma linha por canal; contem `channel_id`, `channel_name`, `guild_name`, `total_messages` e `interacting_authors`, entre outras estatisticas. |
-| [`channel_statistics_2026-09-21.parquet.manifest.json`](../../data/processed/filtering/software/affinity_v2/channel_statistics_2026-09-21.parquet.manifest.json) | Registra 13.275.074 mensagens de entrada, 689 canais, escopo de interacao `human_messages`, timezone UTC para dias ativos e hashes de entrada e saida. |
-| [`canais_a_excluir.txt`](../../data/processed/filtering/software/affinity_v2/canais_a_excluir.txt) | Lista manual de nomes de canais. Cada linha nao vazia e um nome usado na correspondencia exata com `channel_name`. |
-| [`messages_2026-10-07_excluded_channels_min500_interacting5.parquet`](../../data/processed/filtering/software/affinity_v2/messages_2026-10-07_excluded_channels_min500_interacting5.parquet) | Corpus resultante da aplicacao conjunta dos dois criterios de exclusao. |
-| [`messages_2026-10-07_excluded_channels_min500_interacting5.parquet.manifest.json`](../../data/processed/filtering/software/affinity_v2/messages_2026-10-07_excluded_channels_min500_interacting5.parquet.manifest.json) | Registro de proveniencia, parametros, contagens e SHA-256 do resultado final. |
+| `messages.parquet` | Todas as linhas dos canais retidos, com o schema da fonte. |
+| `channel_statistics.parquet` | Volume bruto e autores humanos distintos de todos os canais da fonte. |
+| `decisions.csv` | Estatisticas, flags de exclusao por cada minimo, exclusao manual, decisao e motivo operacional. |
+| `exclusions.txt` | Copia exata da lista aplicada. |
+| `manifest.json` | Versao `participants_min500_min5.v2`, parametros, definicoes, limitacoes, contagens e hashes. |
+| `messages.parquet.manifest.json` | Mesmo manifesto junto ao corpus para rastrear as etapas seguintes. |
 
-O arquivo [`messages_2026-10-07_excluded_channels.parquet`](../../data/processed/filtering/software/affinity_v2/messages_2026-10-07_excluded_channels.parquet) e seu manifesto correspondem a um resultado intermediario, produzido somente com a lista manual. Ele nao e o resultado final da regra combinada documentada aqui.
+A publicacao usa diretorio temporario e recusa sobrescrita. Antes de concluir,
+a implementacao recalcula volume e autores no Parquet de saida e exige
+igualdade com os canais selecionados. `verify` confere os hashes, repete as
+decisoes sobre as estatisticas preservadas e reconta o corpus publicado.
+Uma reproducao integral parte da fonte e executa `select` em outro diretorio.
 
-O [pacote historico congelado](../../annotations/channel_selection_2026-10-07/manifest.json)
-preserva uma copia byte a byte da tabela de estatisticas, da lista manual e dos
-dois manifestos historicos, alem de um
-[registro de decisoes por canal](../../annotations/channel_selection_2026-10-07/decisions.csv)
-e de uma [auditoria executavel](../../annotations/channel_selection_2026-10-07/audit.json).
-O pacote foi criado retrospectivamente, na data UTC registrada em seu manifesto;
-nao deve ser apresentado como um registro de justificativas escrito na epoca
-da selecao. Ele nao inclui texto de mensagens nem IDs de autores.
+## Resultado da Reexecucao
 
-## 4. Estatisticas utilizadas
+As contagens abaixo foram calculadas pela implementacao Python:
 
-O arquivo de estatisticas tem 689 linhas, uma por canal. Para a decisao automatica foram lidos dois campos:
-
-- `total_messages`: volume de mensagens associado ao canal;
-- `interacting_authors`: quantidade de autores interagentes registrada na tabela de estatisticas.
-
-O manifesto das estatisticas declara `interaction_scope: human_messages`, mas
-nao registra o predicado completo. O script de selecao usa os valores congelados
-e nao recalcula a metrica. Uma auditoria posterior reconstruiu uma regra que
-reproduz exatamente os valores dos 689 canais a partir da fonte historica:
-
-> `interacting_authors` e compativel com a quantidade de autores humanos
-> distintos que enviaram, no canal, pelo menos uma referencia de resposta a uma
-> mensagem humana anterior presente no mesmo canal/export, ou uma mensagem com
-> `mention_count > 0`. Cada autor e contado uma unica vez.
-
-Essa e uma **reconstrucao funcional verificada no corpus**, nao recuperacao do
-codigo original. Conta emissores, nao destinatarios apenas por receberem
-respostas; aceita autorrespostas e usa a contagem de mencoes sem validar se o
-destinatario e outro humano. Nao mede conversas semanticas, intensidade de
-participacao nem relevancia tecnica.
-
-Dos sete predicados comparados, somente `resolved_reply_or_mention_senders`
-coincidiu em todos os 689 canais, sem alterar nenhuma decisao final. Usar
-apenas autores humanos distintos divergiu em 661 canais e alteraria 42
-decisoes. A variante que aceita qualquer referencia, sem resolver o
-antecedente, divergiu em 55 canais e alteraria uma decisao. Portanto, nao se
-deve substituir o significado por "autores distintos" nem ignorar a resolucao
-do antecedente. Nenhuma dessas alternativas foi aplicada ao corpus.
-
-O relatorio [INTERACTING_AUTHORS_AUDIT.md](INTERACTING_AUTHORS_AUDIT.md)
-registra todos os resultados, predicados e hashes. O codigo executavel esta em
-[interaction_audit.py](../../discord_filtering/interaction_audit.py). Para repetir
-os calculos em um diretorio novo:
-
-```powershell
-python -m discord_filtering.interaction_audit --output <nova_auditoria>
-```
-
-O pacote historico nao foi reescrito. Sua marcacao original de definicao
-nao recuperada permanece como registro da evidencia disponivel no congelamento;
-a evidencia nova esta separada, com fonte e implementacao identificadas.
-
-### 4.1 Filtro exploratorio versus selecao final
-
-| Aspecto | Inspecao exploratoria | Regra que produziu o corpus final |
-| --- | --- | --- |
-| Condicao de atividade | `total_messages >= 552 AND unique_authors >= 3` | Excluir somente se `total_messages < 500 AND interacting_authors < 5` |
-| Papel | Inspecao inicial de candidatos no notebook | Aplicacao da lista manual e da regra operacional ao universo de 689 canais |
-| Contagem de autores | Autores unicos da tabela historica | Autores marcados como interagentes na tabela historica |
-| Condicao de permanencia por atividade | Alcancar ambos os limites exploratorios | Alcancar pelo menos um dos limites finais |
-
-Os dois procedimentos nao sao equivalentes e nao foram aplicados como filtros
-sucessivos. O criterio exploratorio nao define o universo de entrada da regra
-final. Em particular, um canal com menos de 500 mensagens pode permanecer se
-`interacting_authors >= 5`, desde que nao esteja na lista manual. A auditoria
-identificou 110 canais mantidos nessa situacao, usando **mensagens brutas**;
-esse numero nao deve ser confundido com faixas de mensagens com conteudo.
-
-Nao foi recuperada justificativa contemporanea para a escolha de 552/3 ou
-para sua substituicao por 500/5. Portanto, a mudanca e relatada como decisao
-operacional exploratoria/historica, nao como recalibracao estatistica validada,
-analise de sensibilidade ou demonstracao de equivalencia entre medidas.
-O registro nao permite afirmar que `unique_authors` e `interacting_authors`
-medem a mesma propriedade. Nenhuma nova definicao de autores interagentes
-foi retroativamente atribuida aos valores antigos.
-
-## 5. Regras de exclusao
-
-### 5.1 Exclusao manual por nome
-
-O conteudo de `canais_a_excluir.txt` foi lido como UTF-8. Linhas vazias foram ignoradas e as demais foram comparadas exatamente, sem normalizacao, com `channel_name` na tabela de estatisticas. A comparacao nao diferencia uma decisao por servidor: se o mesmo nome aparece em mais de um servidor, todas as linhas correspondentes sao marcadas para exclusao.
-
-O arquivo contem 47 nomes distintos. Eles corresponderam a 66 canais na tabela de estatisticas. Todos os 47 nomes encontraram correspondencia; nao houve nome sem correspondencia.
-
-A lista preserva as decisoes de exclusao, mas nao contem codigos de motivo, anotador, data da decisao ou justificativa por canal. Nomes como `welcome`, `introductions`, `bot-commands`, `music` e `art-showcase` sugerem tipos de canal, mas esses rotulos nao foram registrados como motivos formais e nao devem ser apresentados como tais.
-
-### 5.2 Exclusao por baixa atividade
-
-Um canal foi considerado de baixa atividade quando as duas condicoes abaixo eram verdadeiras ao mesmo tempo:
-
-$$
-\text{total\_messages} < 500
-\quad\land\quad
-\text{interacting\_authors} < 5
-$$
-
-Os limites sao estritos: um canal com exatamente 500 mensagens ou exatamente 5 autores interagentes nao e removido por este criterio, embora ainda possa ser removido pela lista manual.
-
-Esse criterio marcou 221 canais. Ele foi aplicado como uma regra operacional de limpeza, nao como uma medida de irrelevancia tematica: um canal pequeno pode conter material pertinente, mas foi excluido quando tambem nao alcancou o minimo de autores interagentes definido para esta execucao.
-
-### 5.3 Combinacao dos criterios
-
-Um canal foi excluido se satisfizesse pelo menos um dos criterios. Os cinco canais que satisfizeram os dois criterios foram contados uma unica vez:
-
-| Resultado na tabela de canais | Canais |
+| Medida | Quantidade |
 | --- | ---: |
-| Correspondentes a nomes da lista manual | 66 |
-| Abaixo dos dois limites de atividade | 221 |
-| Presentes nos dois criterios | 5 |
-| Excluidos pela uniao dos criterios | 282 |
-| Mantidos | 407 |
+| Servidores na fonte | 31 |
+| Canais na fonte | 689 |
+| Registros na fonte | 13.275.074 |
+| Canais na lista manual | 66 |
+| Canais abaixo de 500 mensagens | 335 |
+| Canais abaixo de 5 autores humanos | 177 |
+| Canais abaixo de pelo menos um minimo | 335 |
+| Sobreposicao entre lista manual e criterio de atividade | 9 |
+| Canais excluidos pela uniao | 392 |
+| Canais mantidos | 297 |
+| Servidores com canais mantidos | 29 |
+| Registros removidos | 1.377.215 |
+| Registros mantidos | 11.897.859 |
 
-Assim, 282 dos 689 canais foram removidos (40,93%) e 407 foram mantidos (59,07%). A contagem de removidos e da uniao, nao a soma simples de 66 e 221.
+As flags podem se sobrepor. Nenhum canal mantido tem volume bruto abaixo de
+500 ou menos de cinco participantes humanos. Mensagens utilizaveis por
+conteudo sao contadas separadamente na caracterizacao.
 
-## 6. Aplicacao ao Parquet de mensagens
+## Etapas Dependentes
 
-O script [`remove_channel.py`](../../discord_filtering/remove_channel.py) converteu os IDs dos 282 canais selecionados para um conjunto de `channel_id` e percorreu o Parquet de entrada em lotes de 100.000 linhas. Para cada lote, removeu as linhas cujo `channel_id` estava nesse conjunto e escreveu as demais mantendo o schema da origem, com compressao Zstandard.
+A populacao foi recalculada em `population_participants_v2`; o quadro separado
+e [channel_frame_participants_v2.csv](../../annotations/channel_frame_participants_v2.csv).
+O sorteio em `sampling_participants_v2` usou semente 20261014 e o desenho
+hierarquico declarado, produzindo 107 canais, 317 janelas e 17.921 alvos.
+`sampling_participants_audit_v2` passou nas 38 verificacoes independentes.
+Execucoes anteriores nao foram sobrescritas nem usadas como quadro atual.
 
-O resultado da execucao final foi:
-
-| Mensagens | Quantidade |
-| --- | ---: |
-| Na entrada | 13.275.074 |
-| Removidas com os canais excluidos | 1.357.046 |
-| Mantidas no corpus final | 11.918.028 |
-
-As mensagens removidas representam aproximadamente 10,22% da entrada; 89,78% foram mantidas. Essas contagens sao de linhas no Parquet, nao de usuarios, conversas ou mensagens unicas deduplicadas.
-
-O script grava primeiro em um arquivo temporario e publica a saida sem substituir um arquivo preexistente. O manifesto registra os hashes SHA-256 dos tres insumos (mensagens, estatisticas e lista), os parametros de execucao, as contagens e o hash da saida. O valor `source_data_policy: read_only_immutable` documenta que as fontes devem ser tratadas como imutaveis.
-
-## 7. Replay historico, auditoria e limites de reproducibilidade
-
-A estrategia adotada e preservar os **valores historicos usados na decisao**,
-em vez de inventar uma definicao equivalente de `interacting_authors` ou refazer
-a selecao e a amostra sem uma nova versao metodologica. A garantia obtida e
-replay deterministico da decisao condicionado a esses valores, nao reproducao
-integral da etapa a partir das mensagens brutas.
-
-O modulo [channel_selection.py](../../discord_filtering/channel_selection.py)
-centraliza a regra usada tambem por
-[remove_channel.py](../../discord_filtering/remove_channel.py). Ele valida
-colunas, IDs de canal globalmente unicos e contagens inteiras, finitas e nao
-negativas. Valores ausentes nao sao silenciosamente interpretados como
-atividade suficiente. Os limites estritos, o AND e a correspondencia exata de
-nomes possuem testes automatizados.
-
-Para verificar o pacote ja publicado, sem precisar dos Parquets de mensagens:
-
-```powershell
-python -m discord_filtering.channel_selection verify annotations/channel_selection_2026-10-07
-```
-
-Esse comando confere os hashes dos seis arquivos congelados, recalcula a
-decisao a partir da copia da tabela e da lista manual e compara todas as linhas
-do CSV de decisoes e as contagens da auditoria. As colunas `manual_excluded`,
-`low_activity_excluded`, `retained` e `decision_reason` registram o motivo
-**operacional**; nao reconstituem justificativas humanas individuais.
-
-Para reconstruir um pacote em um **diretorio novo**, usando os corpora originais
-disponiveis localmente:
-
-```powershell
-python -m discord_filtering.channel_selection freeze `
-	--output <diretorio_novo_do_pacote>
-```
-
-As opcoes `--statistics`, `--exclusions`, `--source` e `--retained` permitem
-informar os caminhos dos insumos historicos. O comando recusa um diretorio de
-saida existente e verifica: hashes dos quatro insumos contra os manifestos
-historicos; identidade da fonte das estatisticas; parametros 500 AND 5;
-contagens dos manifestos; cobertura da lista manual; e identidade dos canais e
-contagens de linhas por canal nos corpora original e final. A auditoria real
-confirmou as contagens das secoes 5 e 6, sem alterar esses corpora ou a amostra.
-
-`statistics.parquet` preserva todos os campos historicos; `decisions.csv`
-preserva os valores de volume e `interacting_authors` e as decisoes para todos
-os 689 canais. `statistics.manifest.json` e `corpus.manifest.json` sao copias
-dos manifestos originais, sem alteracao retroativa. O manifesto novo registra
-a data do congelamento, o hash da implementacao, os hashes dos arquivos e os
-hashes dos corpora efetivamente conferidos.
-
-Imutabilidade aqui significa preservacao sem sobrescrita e verificacao por
-hash, nao protecao contra escrita no sistema de arquivos. Para a distribuicao
-cientifica, inclua o pacote completo na release versionada e publique o hash
-do manifesto em um arquivo externo confiavel ou deposito persistente. Hashes
-dentro de um pacote que possa ser inteiramente substituido nao constituem
-assinatura nem autenticacao independente. A publicacao/DOI nao e criada por
-este comando.
-
-A rotina antiga `python -m discord_filtering.remove_channel` continua disponivel
-para reaplicar a decisao aos insumos historicos, mas recusa saidas existentes.
-Nao sobrescreva o corpus final. Uma nova regra de interacao exigira nova versao
-da selecao, do quadro e da amostra; nao se deve trocar apenas o nome da metrica
-nem interpretar os valores historicos usando `native_reply_interacting_authors`.
-
-## 8. Lista manual aplicada
-
-A lista abaixo reproduz os nomes nao vazios de `canais_a_excluir.txt`. A presenca nesta lista e a regra efetiva; as categorias aparentes nos nomes nao substituem justificativas individuais que nao foram registradas.
-
-```text
-welcome
-👋┇welcome
-┠👋-introductions
-introduction
-introductions
-introduce-yourself
-👋introduce-yourself
-Welcome New Members
-👋┃new-members
-🙋introduce-yourself
-bot-commands
-🤖┇commands
-bot-playground
-bot-cmds
-bot-spam
-a-scheena-bot
-#! /bot-commands
-💬〡الشات-العام
-🤖〡شات-الأوامر
-🟥〡الاشتراكات
-💻〡الإستفسارات-العامة
-🌏┇general-🇹🇭
-nederlands
-🍆scostumatezze-random
-💲consigli-per-gli-acquisti
-💬┃geral
-💵┃vagas
-russian
-portuguese
-spanish
-indonesian
-🌗・gm-gn
-🚰・faucet
-💬・referral
-🔍┇next-giveaway-sneak-peek
-🔊music
-music
-music-audio
-🎮now-playing
-🐈pet-photos
-old-pets-animals-den
-wallpapers
-screenshots
-gallery
-fan-art
-art-showcase
-animation-showcase
-```
-
-## 9. Limites e interpretacao
-
-1. A lista e baseada em nomes de canal, nao em pares `(guild_id, channel_id)`. Nomes repetidos em servidores diferentes geram exclusao de todas as correspondencias encontradas.
-2. A lista nao registra justificativa individual nem historico de revisao. Uma revisao futura deve preservar a lista atual e registrar autor, data, motivo e decisao anterior/nova.
-3. O codigo original de `interacting_authors` permanece ausente, mas a [auditoria de reconstrucao](INTERACTING_AUTHORS_AUDIT.md) reproduziu todos os 689 valores por emissores humanos de replies resolvidos ou mencoes. O calculo compativel e executavel e verificavel nesse snapshot; isso nao autentica a implementacao original nem estabelece equivalencia em outros corpora. A [caracterizacao da Etapa 3](DISENTANGLEMENT_SAMPLING.md#definicao-operacional-de-autores-interagentes) define separadamente `native_reply_interacting_authors`, que nao inclui mencoes nem autorrespostas. As decisoes manuais nao documentadas e a justificativa dos limiares continuam sendo limitacoes historicas.
-4. Os limites 500/5 sao especificos desta execucao. Nao representam um limiar universal de relevancia, qualidade ou representatividade.
-5. A remocao por canal pode excluir mensagens tecnicamente relevantes de canais com pouca atividade. As analises resultantes se referem ao corpus apos essa regra e nao incluem os 282 canais removidos.
-6. A remocao foi feita por `channel_id` e nao por conteudo da mensagem; todos os registros dos canais mantidos permaneceram elegiveis, inclusive mensagens de bot, salvo filtragem posterior.
+Veja [POPULATION_CHARACTERIZATION.md](POPULATION_CHARACTERIZATION.md),
+[DISENTANGLEMENT_SAMPLING.md](DISENTANGLEMENT_SAMPLING.md) e
+[SAMPLING_DESIGN_AUDIT.md](SAMPLING_DESIGN_AUDIT.md).

@@ -54,7 +54,7 @@ class PopulationTests(unittest.TestCase):
             statuses = {row["status"]: row["replies"] for row in summary["reply_status_counts"]}
             self.assertEqual(statuses, {"resolved": 1, "parent_not_found": 1, "different_channel": 1, "not_preceding": 1})
             channels = pd.read_csv(output / "channels.csv")
-            self.assertEqual(channels.loc[channels.channel_id == "c", "native_reply_interacting_authors"].item(), 1)
+            self.assertEqual(channels.loc[channels.channel_id == "c", "distinct_human_authors"].item(), 2)
             distances = pd.read_csv(output / "reply_distances.csv")
             resolved = distances.loc[distances.status == "resolved"].iloc[0]
             self.assertEqual(resolved["min_position_distance"], 7)

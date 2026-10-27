@@ -1,29 +1,22 @@
-# Proveniencia da Selecao de Canais
+# Quadro de Participantes e Proveniencia
 
-O pacote [channel_selection_2026-10-07](channel_selection_2026-10-07/manifest.json)
-preserva estatisticas agregadas e decisoes operacionais da selecao final de
-Engenharia de Software: lista manual, valores historicos de
-`interacting_authors`, manifestos originais, decisoes por canal e auditoria
-contra os corpora. Nao contem texto de mensagens nem IDs de autores.
+O quadro atual e
+[channel_frame_participants_v2.csv](channel_frame_participants_v2.csv), gerado
+apos a selecao de canais com pelo menos 500 registros brutos e cinco autores
+humanos distintos. Ele contem 297 canais de 29 servidores e estados provisorios
+de elegibilidade; nao sao rotulos de conversas anotadas.
+
+A fonte, as estatisticas recalculadas, as decisoes por canal e os hashes estao
+em `data/processed/filtering/software/participants_v2`. Verificacao:
 
 ```powershell
-python -m discord_filtering.channel_selection verify annotations/channel_selection_2026-10-07
+python -m discord_filtering.channel_selection verify
 ```
 
-Ele permite repetir as decisoes sobre valores congelados, nao recuperar o
-calculo original de `interacting_authors`. Preserve o pacote sem sobrescrita e
-inclua-o na release cientifica, com hash do manifesto publicado externamente.
+O pacote `channel_selection_2026-10-07` e o cadastro anterior sao somente arquivo
+historico, preservados sem sobrescrita. Nao sao insumos da selecao, do quadro
+ou da amostra vigentes. O fluxo ativo nao usa contadores de autores baseados
+em replies ou mencoes.
 
-A [auditoria posterior de reconstrucao](../docs/methodology/INTERACTING_AUTHORS_AUDIT.md)
-identificou uma regra executavel compativel com todos os 689 valores, a partir
-das mensagens originais: emissores humanos de referencias resolvidas ou mencoes.
-Essa evidencia e armazenada separadamente; os manifestos congelados nao sao
-reescritos para alterar retrospectivamente seu estado de conhecimento.
-
-O inventario exploratorio Neo4j com todas as decisoes `pending` foi retirado:
-nao era o registro de selecao do corpus atual nem continha revisoes humanas.
-As tabelas de futura anotacao sao geradas a partir das janelas amostradas,
-conforme o [codebook](../docs/methodology/ANNOTATION_CODEBOOK.md).
-
-Consulte [a documentacao da Etapa 2](../docs/methodology/CHANNEL_SELECTION_STAGE.md)
-para a diferenca entre a triagem exploratoria 552/3 e a regra final 500 AND 5.
+Procedimento: [CHANNEL_SELECTION_STAGE.md](../docs/methodology/CHANNEL_SELECTION_STAGE.md).
+Anotacao futura: [ANNOTATION_CODEBOOK.md](../docs/methodology/ANNOTATION_CODEBOOK.md).

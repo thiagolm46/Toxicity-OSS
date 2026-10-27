@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "software-engineering",
-  "profile_version": "1.0.0",
+  "profile_version": "1.1.0",
   "domain": "software",
   "description": "Perfil para selecionar comunidades de engenharia de software usando metadados textuais curados do Discord.",
   "server": {
@@ -40,7 +40,7 @@
     "signals": [{"id": "technical", "label": "technical discussion", "pattern": "\\b(?:github|gitlab|issue|pull request|commit|branch|function|class|error|exception|api|dependency|package|compile|build|debug|docker|kubernetes)\\b|```|`[^`]{2,}`", "count_field": "technical_messages", "lexical_weight": 1, "lexical_saturation_ratio": 0.1, "domain_weight": 1, "domain_saturation_ratio": 0.1}],
     "component_weights": {"metadata": 0.2, "lexical": 0.6, "domain": 0.2},
     "classification": {"high_confidence_score": 0.7, "review_score": 0.5, "high_min_lexical_score": 0.3, "fallback_min_lexical_score": 0.45, "fallback_min_domain_score": 0.2, "admin_max_lexical_score": 0.3, "admin_max_domain_score": 0.2, "social_max_lexical_score": 0.35, "admin_negative_labels": ["administrative"], "social_negative_labels": ["social"], "class_high": "A", "class_review": "B", "class_social": "C", "class_admin": "D", "include_classes": ["A"], "manual_review_classes": ["B"]},
-    "conversation_suitability": {"min_human_users": 5, "min_interacting_human_users": 3, "min_interaction_ratio": 0.05, "min_author_transition_ratio": 0.2, "max_dominant_author_ratio": 0.7, "max_bot_message_ratio": 0.25},
+    "conversation_suitability": {"min_human_users": 5, "min_interaction_ratio": 0.05, "min_author_transition_ratio": 0.2, "max_dominant_author_ratio": 0.7, "max_bot_message_ratio": 0.25},
     "exclude_bot_messages": true,
     "max_evidence_examples": 5,
     "score_field": "software_channel_score",

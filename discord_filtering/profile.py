@@ -549,7 +549,6 @@ def profile_from_dict(raw: Mapping[str, Any]) -> FilterProfile:
         conversation_raw,
         {
             "min_human_users",
-            "min_interacting_human_users",
             "min_interaction_ratio",
             "min_author_transition_ratio",
             "max_dominant_author_ratio",
@@ -561,11 +560,6 @@ def profile_from_dict(raw: Mapping[str, Any]) -> FilterProfile:
         min_human_users=_integer(
             conversation_raw["min_human_users"],
             "$profile.channel.conversation_suitability.min_human_users",
-            minimum=1,
-        ),
-        min_interacting_human_users=_integer(
-            conversation_raw["min_interacting_human_users"],
-            "$profile.channel.conversation_suitability.min_interacting_human_users",
             minimum=1,
         ),
         min_interaction_ratio=_ratio(
