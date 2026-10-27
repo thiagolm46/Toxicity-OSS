@@ -1,7 +1,10 @@
 import json
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -11,9 +14,47 @@ from discord_filtering.channel_selection import (
     verify_historical_selection,
 )
 from discord_filtering.storage import sha256_file
+from discord_filtering.interaction_audit import audit_interacting_authors, compare_candidates, main as interaction_audit_main, write_audit_report
 
 
 class ChannelDecisionTests(unittest.TestCase):
+    def test_new_audit_does_not_overwrite_a_shared_report_by_default(self):
+        with patch("sys.argv", ["interaction_audit", "--output", "new-audit"]), \
+             patch("discord_filtering.interaction_audit.audit_interacting_authors", return_value={}) as audit, \
+             patch("discord_filtering.interaction_audit.write_audit_report") as report, \
+             contextlib.redirect_stdout(io.StringIO()):
+            interaction_audit_main()
+            audit.assert_called_once()
+            report.assert_not_called()
+
+    def test_interaction_hypotheses_distinguish_senders_and_resolved_replies(self):
+        base = {"guild_id": "g", "channel_id": "c", "is_bot": False,
+                "timestamp": "2026-01-01T00:00:00Z", "referenced_message_id": None,
+                "mention_count": 0}
+        rows = [
+            {**base, "message_id": "1", "author_id": "a"},
+            {**base, "message_id": "2", "author_id": "b", "referenced_message_id": "1"},
+            {**base, "message_id": "3", "author_id": "c", "mention_count": 1},
+            {**base, "message_id": "4", "author_id": "d", "referenced_message_id": "absent"},
+            {**base, "message_id": "5", "author_id": "a", "referenced_message_id": "1"},
+            {**base, "message_id": "6", "author_id": "bot", "is_bot": True, "mention_count": 1},
+        ]
+        statistics = pd.DataFrame([{"guild_id": "g", "guild_name": "Guild", "channel_id": "c",
+                                    "channel_name": "general", "total_messages": 6, "interacting_authors": 4}])
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "messages.parquet"
+            pd.DataFrame(rows).to_parquet(source, index=False)
+            comparison, candidates = compare_candidates(source, statistics, set(), database=Path(temporary) / "audit.duckdb")
+            self.assertEqual(comparison.human_authors.item(), 4)
+            self.assertEqual(comparison.reply_senders.item(), 3)
+            self.assertEqual(comparison.mention_senders.item(), 1)
+            self.assertEqual(comparison.reply_or_mention_senders.item(), 4)
+            self.assertEqual(comparison.resolved_reply_senders.item(), 2)
+            self.assertEqual(comparison.resolved_reply_or_mention_senders.item(), 3)
+            self.assertEqual(comparison.other_author_reply_or_mention_senders.item(), 2)
+            exact = candidates.loc[candidates.different_channels == 0, "candidate"].tolist()
+            self.assertEqual(exact, ["human_authors", "reply_or_mention_senders"])
+
     def test_strict_boundaries_conjunction_and_exact_manual_names(self):
         rows = [
             ("1", "tiny", 499, 4),
@@ -56,10 +97,16 @@ class HistoricalBundleTests(unittest.TestCase):
         pd.DataFrame([
             {"guild_id": "g", "guild_name": "Guild", "channel_id": identifier,
              "channel_name": name, "total_messages": volume, "interacting_authors": authors}
-            for identifier, name, volume, authors in (("1", "tiny", 2, 1), ("2", "NA", 5, 5), ("3", "manual", 2, 2))
+            for identifier, name, volume, authors in (("1", "tiny", 2, 2), ("2", "NA", 5, 5), ("3", "manual", 2, 2))
         ]).to_parquet(self.statistics, index=False)
         self.exclusions.write_text("manual\n", encoding="utf-8")
         messages = pd.DataFrame([{"guild_id": "g", "channel_id": identifier} for identifier in ["1", "1", *(["2"] * 5), "3", "3"]])
+        messages["message_id"] = [str(index) for index in range(len(messages))]
+        messages["author_id"] = messages.message_id
+        messages["timestamp"] = "2026-01-01T00:00:00Z"
+        messages["is_bot"] = False
+        messages["referenced_message_id"] = None
+        messages["mention_count"] = 1
         messages.to_parquet(self.source, index=False)
         messages.loc[messages.channel_id == "2"].to_parquet(self.retained, index=False)
         self.corpus_manifest = {
@@ -83,6 +130,27 @@ class HistoricalBundleTests(unittest.TestCase):
 
     def _freeze(self):
         return freeze_historical_selection(self.statistics, self.exclusions, self.source, self.retained, self.output)
+
+    def test_interaction_audit_records_ambiguity_and_report_provenance(self):
+        self._freeze()
+        audit_dir = self.root / "interaction-audit"
+        summary = audit_interacting_authors(self.source, self.output, audit_dir)
+        self.assertIn("resolved_reply_or_mention_senders", summary["exactly_matching_candidates"])
+        self.assertIn("human_authors", summary["exactly_matching_candidates"])
+        self.assertEqual(summary["historical_definition_status"], "unrecovered")
+        report = self.root / "audit.md"
+        write_audit_report(audit_dir, report)
+        self.assertIn("3 de 3 canais coincidentes", report.read_text(encoding="utf-8"))
+        self.assertIn("nao prova", report.read_text(encoding="utf-8"))
+        self.assertIn("| Candidata | Canais iguais", report.read_text(encoding="utf-8"))
+        self.assertNotIn("|\n\n|", report.read_text(encoding="utf-8"))
+        with self.assertRaises(FileExistsError):
+            write_audit_report(audit_dir, report)
+        with self.assertRaises(FileExistsError):
+            audit_interacting_authors(self.source, self.output, audit_dir)
+        (audit_dir / "summary.json").write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "hash mismatch"):
+            write_audit_report(audit_dir, self.root / "tampered.md")
 
     def test_bundle_replays_without_original_sources_and_rejects_tampering(self):
         audit = self._freeze()

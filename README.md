@@ -55,6 +55,15 @@ permite replay das decisoes, nao reconstrucao integral dessa metrica:
 python -m discord_filtering.channel_selection verify annotations/channel_selection_2026-10-07
 ```
 
+Uma [auditoria adicional](docs/methodology/INTERACTING_AUTHORS_AUDIT.md)
+reproduziu os 689 valores historicos contando emissores humanos de replies
+resolvidos ou mencoes. E reconstrucao funcional verificada nesse corpus, nao
+recuperacao da rotina original. Para repetir os calculos sem alterar a selecao:
+
+```powershell
+python -m discord_filtering.interaction_audit --output <nova_auditoria>
+```
+
 As mensagens brutas nao sao distribuidas pelo repositorio. Acesso e eventual
 redistribuicao devem respeitar os termos do dataset-fonte.
 

@@ -137,7 +137,7 @@ def main() -> None:
     excluded_channel_ids = set(excluded["channel_id"].astype(str))
     overlap_count = int((manual_exclusion_mask & low_activity_mask).sum())
 
-    print("Execucao historica: interacting_authors e usado como valor congelado, sem definicao recuperada.")
+    print("Execucao historica: interacting_authors usa valores congelados; a reconstrucao compativel e verificada separadamente por interaction_audit.")
     print(f"Canais antes: {len(statistics)}")
     print(f"Removidos pela lista: {int(manual_exclusion_mask.sum())}")
     print(f"Removidos pelos limites de atividade: {int(low_activity_mask.sum())}")

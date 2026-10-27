@@ -195,7 +195,7 @@ def freeze_historical_selection(
             "implementation_sha256": sha256_file(Path(__file__)),
             "verified_corpora": [{"path": str(path), "sha256": checked[path.name]} for path in (source_path, retained_path)],
             "files": [{"name": filename, "sha256": sha256_file(staging / filename)} for filename in BUNDLE_FILES],
-            "limitations": ["interacting_authors cannot be recomputed from messages with a verified historical predicate", "manual exclusion reasons are not available per channel", "552/3 exploratory thresholds and final 500 AND 5 thresholds have no recovered calibration rationale"],
+            "limitations": ["original interacting_authors implementation is absent; bundle replays frozen values, while interaction_audit separately tests corpus-specific reconstructions", "manual exclusion reasons are not available per channel", "552/3 exploratory thresholds and final 500 AND 5 thresholds have no recovered calibration rationale"],
         }
         atomic_write_bytes(staging / "manifest.json", (json.dumps(bundle_manifest, indent=2) + "\n").encode())
         staging.rename(output)

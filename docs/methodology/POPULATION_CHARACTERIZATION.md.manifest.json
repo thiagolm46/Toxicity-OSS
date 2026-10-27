@@ -1,7 +1,7 @@
 {
   "manifest_schema_version": 1,
   "command": "generate-population-report",
-  "generator_sha256": "c16820ff5c53c97fd6aad5a8e6b4c69fabe4f05e2fed69deeb06ee1bc36baecf",
+  "generator_sha256": "32eee714917e35fdc3429a29da1af55a5388639f5a480078393d404ac8baf501",
   "population_manifest_sha256": "bd3d9953ade9abf6a4625bbf79d572358fa23a4a8259751650fafc3068892e8e",
   "inputs": [
     {
@@ -31,6 +31,6 @@
   ],
   "output": {
     "path": "C:\\Users\\thiag\\OneDrive\\Documentos\\Mestrado\\Toxicity-OSS\\docs\\methodology\\POPULATION_CHARACTERIZATION.md",
-    "sha256": "a32181396e76aaca3f3ddfca52e8eeb798257bcaee7a133af283ad98ac87885d"
+    "sha256": "b9b1af5f52bb45c838b1d76e73c62f2f5f54b1cac48cf12744e0cf41b1f3305c"
   }
 }

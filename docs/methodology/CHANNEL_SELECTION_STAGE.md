@@ -48,7 +48,42 @@ O arquivo de estatisticas tem 689 linhas, uma por canal. Para a decisao automati
 - `total_messages`: volume de mensagens associado ao canal;
 - `interacting_authors`: quantidade de autores interagentes registrada na tabela de estatisticas.
 
-O manifesto das estatisticas declara `interaction_scope: human_messages`. A definicao operacional completa de quando um autor conta como interagente nao esta registrada nesse manifesto nem no script de remocao; portanto, a interpretacao desta variavel deve permanecer limitada ao valor calculado no artefato de estatisticas. Os limites desta etapa nao recalculam interacoes a partir das mensagens.
+O manifesto das estatisticas declara `interaction_scope: human_messages`, mas
+nao registra o predicado completo. O script de selecao usa os valores congelados
+e nao recalcula a metrica. Uma auditoria posterior reconstruiu uma regra que
+reproduz exatamente os valores dos 689 canais a partir da fonte historica:
+
+> `interacting_authors` e compativel com a quantidade de autores humanos
+> distintos que enviaram, no canal, pelo menos uma referencia de resposta a uma
+> mensagem humana anterior presente no mesmo canal/export, ou uma mensagem com
+> `mention_count > 0`. Cada autor e contado uma unica vez.
+
+Essa e uma **reconstrucao funcional verificada no corpus**, nao recuperacao do
+codigo original. Conta emissores, nao destinatarios apenas por receberem
+respostas; aceita autorrespostas e usa a contagem de mencoes sem validar se o
+destinatario e outro humano. Nao mede conversas semanticas, intensidade de
+participacao nem relevancia tecnica.
+
+Dos sete predicados comparados, somente `resolved_reply_or_mention_senders`
+coincidiu em todos os 689 canais, sem alterar nenhuma decisao final. Usar
+apenas autores humanos distintos divergiu em 661 canais e alteraria 42
+decisoes. A variante que aceita qualquer referencia, sem resolver o
+antecedente, divergiu em 55 canais e alteraria uma decisao. Portanto, nao se
+deve substituir o significado por "autores distintos" nem ignorar a resolucao
+do antecedente. Nenhuma dessas alternativas foi aplicada ao corpus.
+
+O relatorio [INTERACTING_AUTHORS_AUDIT.md](INTERACTING_AUTHORS_AUDIT.md)
+registra todos os resultados, predicados e hashes. O codigo executavel esta em
+[interaction_audit.py](../../discord_filtering/interaction_audit.py). Para repetir
+os calculos em um diretorio novo:
+
+```powershell
+python -m discord_filtering.interaction_audit --output <nova_auditoria>
+```
+
+O pacote historico nao foi reescrito. Sua marcacao original de definicao
+nao recuperada permanece como registro da evidencia disponivel no congelamento;
+a evidencia nova esta separada, com fonte e implementacao identificadas.
 
 ### 4.1 Filtro exploratorio versus selecao final
 
@@ -251,7 +286,7 @@ animation-showcase
 
 1. A lista e baseada em nomes de canal, nao em pares `(guild_id, channel_id)`. Nomes repetidos em servidores diferentes geram exclusao de todas as correspondencias encontradas.
 2. A lista nao registra justificativa individual nem historico de revisao. Uma revisao futura deve preservar a lista atual e registrar autor, data, motivo e decisao anterior/nova.
-3. O significado exato de `interacting_authors` permanece nao recuperado: nao e verificavel se contava emissores/destinatarios, mencoes ou autorrespostas. O pacote congelado permite repetir a decisao sobre os mesmos valores e auditar sua correspondencia com os corpora; nao permite recalcular a metrica a partir das mensagens. Esta e uma limitacao da execucao historica, que nao deve ser descrita como inteiramente reproduzivel. A [caracterizacao da Etapa 3](DISENTANGLEMENT_SAMPLING.md#definicao-operacional-de-autores-interagentes) define separadamente `native_reply_interacting_authors`, sem alegar equivalencia. Recuperar a rotina original ou versionar uma nova regra e refazer as etapas dependentes permanece necessario antes de generalizar esse limite.
+3. O codigo original de `interacting_authors` permanece ausente, mas a [auditoria de reconstrucao](INTERACTING_AUTHORS_AUDIT.md) reproduziu todos os 689 valores por emissores humanos de replies resolvidos ou mencoes. O calculo compativel e executavel e verificavel nesse snapshot; isso nao autentica a implementacao original nem estabelece equivalencia em outros corpora. A [caracterizacao da Etapa 3](DISENTANGLEMENT_SAMPLING.md#definicao-operacional-de-autores-interagentes) define separadamente `native_reply_interacting_authors`, que nao inclui mencoes nem autorrespostas. As decisoes manuais nao documentadas e a justificativa dos limiares continuam sendo limitacoes historicas.
 4. Os limites 500/5 sao especificos desta execucao. Nao representam um limiar universal de relevancia, qualidade ou representatividade.
 5. A remocao por canal pode excluir mensagens tecnicamente relevantes de canais com pouca atividade. As analises resultantes se referem ao corpus apos essa regra e nao incluem os 282 canais removidos.
 6. A remocao foi feita por `channel_id` e nao por conteudo da mensagem; todos os registros dos canais mantidos permaneceram elegiveis, inclusive mensagens de bot, salvo filtragem posterior.

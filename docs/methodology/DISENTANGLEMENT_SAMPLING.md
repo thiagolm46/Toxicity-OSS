@@ -158,16 +158,21 @@ Nao confundir tres medidas:
    nao conta destinatarios apenas por receberem reply, nem mencoes, replies a si
    proprio ou antecedentes fora do corpus.
 
-A ultima e uma definicao nova, explicita e conservadora, nao uma reconstituicao
-da coluna historica `interacting_authors` da Etapa 2. O manifesto historico
-declara apenas `interaction_scope = human_messages`; a implementacao de
-`profile-channels` que produziu aquela tabela nao esta disponivel no codigo nem
-no historico Git consultado. Portanto, ainda nao e verificavel se aquela coluna
-contava emissores ou destinatarios, mencoes, autorrespostas e replies nao
-resolvidos. A rotina atual de scoring tem outra coluna,
-`interacting_human_user_count`, e conta emissores com reply a ID humano anterior
-ou `mention_count > 0`; isso nao prova equivalencia com a estatistica historica.
-O criterio 500/5 da Etapa 2 nao e alterado nem reaplicado nesta caracterizacao.
+A ultima e uma definicao nova, explicita e conservadora, diferente da coluna
+historica `interacting_authors`. A [auditoria de reconstrucao](INTERACTING_AUTHORS_AUDIT.md)
+comparou sete predicados na fonte original: emissores humanos distintos de
+replies resolvidos a mensagens humanas anteriores no mesmo canal, ou de
+mensagens com `mention_count > 0`, reproduziram todos os 689 valores
+historicos. Essa regra aceita autorrespostas e mencoes sem validar o tipo do
+destinatario; nao exige conteudo utilizavel. Portanto, nao equivale a
+`native_reply_interacting_authors`.
+
+A implementacao antiga continua ausente. A igualdade e uma reconstrucao
+empiricamente verificada nesse snapshot, nao prova da identidade do codigo
+original nem validade semantica da metrica. A rotina atual de scoring tem
+outra coluna, `interacting_human_user_count`, com logica proxima; sua existencia
+isolada nao era suficiente para demonstrar equivalencia. O criterio 500/5,
+o corpus e a amostra nao foram alterados durante a auditoria.
 
 Na caracterizacao atual, 46 canais concentram aproximadamente 80% das mensagens
 humanas utilizaveis. Por isso, o desenho abaixo nao aloca janelas

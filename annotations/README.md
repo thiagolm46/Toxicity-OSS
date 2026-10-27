@@ -14,6 +14,12 @@ Ele permite repetir as decisoes sobre valores congelados, nao recuperar o
 calculo original de `interacting_authors`. Preserve o pacote sem sobrescrita e
 inclua-o na release cientifica, com hash do manifesto publicado externamente.
 
+A [auditoria posterior de reconstrucao](../docs/methodology/INTERACTING_AUTHORS_AUDIT.md)
+identificou uma regra executavel compativel com todos os 689 valores, a partir
+das mensagens originais: emissores humanos de referencias resolvidas ou mencoes.
+Essa evidencia e armazenada separadamente; os manifestos congelados nao sao
+reescritos para alterar retrospectivamente seu estado de conhecimento.
+
 O inventario exploratorio Neo4j com todas as decisoes `pending` foi retirado:
 nao era o registro de selecao do corpus atual nem continha revisoes humanas.
 As tabelas de futura anotacao sao geradas a partir das janelas amostradas,

@@ -1,0 +1,6 @@
+{
+  "command": "interaction-audit-report",
+  "audit_manifest_sha256": "8efcbfb499adf625f8981c76c35d3ad6840b834feb8a4dfce3d85d171329734b",
+  "generator_sha256": "e53bd7aaff01e4939679d533d273fa898c4161d62badf7e0df19daff0f9cf706",
+  "output_sha256": "ef462ecd59979ef5a3ae8c79ec84206392384849385d5e540ea1935a4e070ed9"
+}
