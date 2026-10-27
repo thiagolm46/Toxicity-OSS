@@ -408,7 +408,7 @@ def _validate_channel_frame(frame: pd.DataFrame) -> None:
         raise ValueError("invalid size_stratum")
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Reproducible hierarchical stratified sampling; input Parquet is never modified.")
     commands = parser.add_subparsers(dest="command", required=True)
     prepare = commands.add_parser("prepare-frame", help="Create the provisional channel eligibility CSV for review.")
@@ -427,7 +427,7 @@ def main() -> None:
     draw.add_argument("--target-messages", type=int, default=100)
     draw.add_argument("--context-messages", type=int, default=200)
     draw.add_argument("--memory-limit", default="2GB")
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(argv)
     if arguments.command == "prepare-frame":
         frame = prepare_channel_frame(arguments.channels, arguments.output, small_max=arguments.small_max, medium_max=arguments.medium_max)
         print(json.dumps({"frame_channels": len(frame), "output": str(arguments.output)}, indent=2))

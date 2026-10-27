@@ -216,7 +216,7 @@ def generate_population_report(
             [field, *distribution(channels[field])] for field in ("distinct_human_authors", "distinct_usable_human_authors", "native_reply_interacting_authors")
         ]),
         f"Canais sem emissores de reply humano resolvido: {number((channels.native_reply_interacting_authors == 0).sum())}; canais com menos de cinco: {number((channels.native_reply_interacting_authors < 5).sum())}. Esses numeros usam a nova definicao e nao reconstituem a regra historica.",
-        "A definicao original de `interacting_authors` da Etapa 2 permanece nao verificavel: o manifesto declara apenas `interaction_scope = human_messages`, sem o predicado, e a rotina original `profile-channels` nao foi localizada. A coluna atual de scoring `interacting_human_user_count` conta emissores com reply a ID humano anterior ou `mention_count > 0`, mas isso nao prova equivalencia com a tabela historica. A nova medida tem nome distinto e nao altera a selecao 500/5.",
+        "A definicao original de `interacting_authors` da Etapa 2 permanece nao verificavel: o manifesto declara apenas `interaction_scope = human_messages`, sem o predicado, e a rotina original `profile-channels` nao foi localizada. O pacote `annotations/channel_selection_2026-10-07` preserva a tabela historica, a lista, os manifestos e os valores/decisoes por canal, com auditoria executavel dos corpora. Ele permite replay da decisao sobre os valores congelados, nao recalculo da metrica a partir das mensagens; a etapa historica nao e inteiramente reproduzivel nesse sentido. A inspecao exploratoria 552 mensagens/3 autores unicos nao foi uma mascara anterior a regra final 500 AND 5, e nao foi recuperada justificativa estatistica para essa mudanca. A coluna atual de scoring `interacting_human_user_count` conta emissores com reply a ID humano anterior ou `mention_count > 0`, mas isso nao prova equivalencia com a tabela historica. A nova medida tem nome distinto e nao altera a selecao 500/5. Consulte `docs/methodology/CHANNEL_SELECTION_STAGE.md` para o escopo do replay e suas limitacoes.",
         "Nao ha contagens por autor nos artefatos agregados; portanto este documento nao estima distribuicao individual de produtividade, participacao do autor dominante ou concentracao entre autores.",
         "## 5. Cobertura e distribuicao temporal",
         "### 5.1. Cobertura por canal",
@@ -352,12 +352,12 @@ def generate_population_report(
     return output
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Generate an auditable detailed population report in Markdown.")
     parser.add_argument("--input-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--output", type=Path, default=DEFAULT_REPORT)
     parser.add_argument("--overwrite", action="store_true")
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(argv)
     print(generate_population_report(arguments.input_dir, arguments.output, overwrite=arguments.overwrite))
 
 

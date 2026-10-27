@@ -131,36 +131,27 @@ mas não uma relação pai-filho. Valores permitidos em `source_status`:
 - `new_conversation`: há início claro de tópico, explicitamente julgado pelo
   anotador.
 
-O materializador aceita arestas apenas de fontes `complete`. `no_reply`,
+As arestas finais devem vir apenas de fontes `complete`. `no_reply`,
 `outside_context` e `ambiguous` não criam arestas e não implicam que a mensagem
-inicia uma conversa nova. `new_conversation` é a única decisão que cria uma
-conversa singleton: somente na materialização ele vira o self-link compatível
-`M30 -> M30`. Um pai fora da janela nunca é inventado.
+inicia uma conversa nova. `new_conversation` registra explicitamente um inicio;
+nao se cria self-link na tabela humana. Um pai fora da janela nunca é inventado.
 
 ## 5. Agrupamento conversacional
 
-Depois de concluir as arestas, execute:
+A derivacao de conversas e posterior a conclusao e validacao dos rotulos.
+Ela nao integra o executavel atual, dedicado a preparar os dados para anotacao.
+O comando legado de materializacao foi retirado; nao ha treinamento ou inferencia
+nesta etapa. A regra futura deve ser versionada junto dos dados anotados.
 
-```powershell
-discord-disentangle derive-annotation-components `
-  --messages <messages.parquet> `
-  --sample-messages <sample_messages.parquet> `
-  --annotations <annotations.parquet> `
-  --source-statuses <source_statuses.parquet> `
-  --output <diretorio_gold_humano>
-```
-
-O comando valida as arestas e escreve `human_reply_edges.parquet` e
-`human_reply_components.parquet`. O segundo arquivo calcula `conversation_id`
-como componente conexo não direcionado das arestas humanas. Para as arestas
+Uma possivel convencao de `conversation_id` e o componente conexo nao
+direcionado das arestas humanas aceitas. Para as arestas
 `M10 -> M4`, `M11 -> M4`, `M12 -> M7`, `M13 -> M10` e `M13 -> M11`, as mensagens
 `M4`, `M10`, `M11` e `M13` pertencem ao mesmo componente; `M7` e `M12` pertencem
 a outro.
 
-`conversation_id` é, portanto, derivado e reproduzível, não um rótulo do
-anotador. Somente mensagens participantes de pelo menos uma aresta humana
-recebem um componente; fontes sem aresta não são convertidas em conversas
-singleton automaticamente.
+`conversation_id` seria, portanto, derivado, nao um rotulo do anotador.
+Fontes sem aresta nao devem ser convertidas automaticamente em conversas
+singleton; inicios explicitamente julgados devem permanecer distinguiveis.
 
 ## 6. Regras iniciais de decisão
 

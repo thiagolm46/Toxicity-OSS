@@ -18,7 +18,7 @@ from discord_disentanglement.sampling import CHANNEL_KEY, DEFAULT_SAMPLE, INCLUD
 from discord_filtering.storage import atomic_write_bytes, sha256_file
 
 
-DEFAULT_AUDIT = ROOT / "data/processed/disentanglement/sampling_design_audit_v1"
+DEFAULT_AUDIT = ROOT / "data/processed/disentanglement/sampling_design_audit_v3"
 DEFAULT_REPORT = ROOT / "docs/methodology/SAMPLING_DESIGN_AUDIT.md"
 
 
@@ -589,14 +589,14 @@ def _text(value: object) -> str | None:
     return str(value).strip() or None
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Audit sampling design, inclusion probabilities, window usefulness and context; never redraw or filter.")
     parser.add_argument("--sample", type=Path, default=DEFAULT_SAMPLE)
     parser.add_argument("--output", type=Path, default=DEFAULT_AUDIT)
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
     parser.add_argument("--memory-limit", default="2GB")
     parser.add_argument("--overwrite-report", action="store_true")
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(argv)
     summary = audit_sample(arguments.sample, arguments.output, arguments.report,
                            memory_limit=arguments.memory_limit, overwrite_report=arguments.overwrite_report)
     print(json.dumps(summary, indent=2, ensure_ascii=True, allow_nan=False))

@@ -2,7 +2,7 @@
 
 ## Proposito
 
-Este documento explica como criar um perfil JSON para o modulo `discord_filtering` em outro dominio.
+Este documento descreve os perfis JSON de software utilizados pelo modulo `discord_filtering`, seus schemas e regras de versionamento.
 
 O motor nao contem keywords de dominio. Ele recebe registros, aplica regras declaradas no perfil e preserva a evidencia responsavel por cada escore. Um escore e um indice de evidencia definido pelo perfil; nao e uma probabilidade, nem um rotulo binario por si so.
 
@@ -297,7 +297,7 @@ $$
 
 `exclude_bot_messages` remove mensagens de bot da evidencia lexical, `max_evidence_examples` limita exemplos preservados por sinal, e `score_field` e `domain_score_field` definem aliases de saida para o escore composto e a evidencia de dominio.
 
-## Roteiro para Outro Dominio
+## Versionamento dos Perfis de Software
 
 1. Defina o construto: escreva o que o score mede, sem transforma-lo em rotulo binario prematuro.
 2. Comece com um perfil `v2`. Configure somente campos existentes na fonte e escolha pesos de campo por qualidade semantica.

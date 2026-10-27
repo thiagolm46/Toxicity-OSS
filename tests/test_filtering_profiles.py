@@ -26,18 +26,18 @@ ROOT = Path(__file__).resolve().parents[1]
 SOFTWARE_PROFILE = ROOT / "configs" / "filtering" / "software.v1.json"
 SOFTWARE_ENGINEERING_PROFILE = ROOT / "configs" / "filtering" / "software.engineering.v1.json"
 SOFTWARE_ENGINEERING_SCORING_PROFILE = ROOT / "configs" / "filtering" / "software.engineering.v2.json"
-GAMES_PROFILE = ROOT / "configs" / "filtering" / "games.v1.json"
 
 
 class ProfileValidationTests(unittest.TestCase):
-    def test_both_domains_use_the_same_validated_model(self) -> None:
-        software = load_profile(SOFTWARE_PROFILE)
-        games = load_profile(GAMES_PROFILE)
-
-        self.assertEqual(software.profile_id, "software")
-        self.assertEqual(games.profile_id, "games")
-        self.assertEqual(software.server.overlap_policy, "max_per_group")
-        self.assertEqual(games.channel.overlap_policy, "max_per_group")
+    def test_software_profiles_use_the_validated_model(self) -> None:
+        for path in (SOFTWARE_PROFILE, SOFTWARE_ENGINEERING_PROFILE, SOFTWARE_ENGINEERING_SCORING_PROFILE):
+            with self.subTest(profile=path.name):
+                profile = load_profile(path)
+                self.assertEqual(profile.server.overlap_policy, "max_per_group")
+                if path == SOFTWARE_ENGINEERING_SCORING_PROFILE:
+                    self.assertIsNone(profile.channel)
+                else:
+                    self.assertEqual(profile.channel.overlap_policy, "max_per_group")
 
     def test_unknown_profile_keys_are_rejected(self) -> None:
         raw = json.loads(SOFTWARE_PROFILE.read_text(encoding="utf-8"))
@@ -422,27 +422,6 @@ class ChannelScoringTests(unittest.TestCase):
             software.channel.max_evidence_examples,
         )
 
-        games = load_profile(GAMES_PROFILE)
-        game_messages = [
-            {
-                "message_id": str(index),
-                "author_id": str(index % 3),
-                "is_bot": False,
-                "content": (
-                    "Valorant gameplay match ranked MMR strategy loadout Steam looking for group "
-                    "play tonight new season"
-                ),
-            }
-            for index in range(30)
-        ]
-        game_result = score_channel(
-            {"guild_id": "2", "channel_id": "20", "channel_name": "gameplay"},
-            games,
-            messages=game_messages,
-        )
-
-        self.assertEqual(game_result.channel_class, "A")
-        self.assertEqual(game_result.to_record()["game_channel_score"], game_result.channel_score)
 
 
 class ArtifactSafetyTests(unittest.TestCase):

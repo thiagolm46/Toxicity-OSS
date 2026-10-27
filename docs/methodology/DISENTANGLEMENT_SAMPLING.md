@@ -440,26 +440,28 @@ sensibilidade de contexto e variancia exata de totais auxiliares conhecidos.
 
 ## Relacao com a ferramenta de anotacao
 
-O comando `discord-disentangle gold-standard` produz janelas continuas por
-canal. Por padrao, cada janela contem 100 mensagens-alvo (`annotated_window_size`)
-e ate 200 mensagens anteriores de contexto (`context_message_count`). Apenas as
-mensagens-alvo exigem anotacao; o contexto pode receber arestas como
-antecedente, mas nao aumenta o tamanho da amostra.
+O comando `discord-prepare draw` sorteia as janelas probabilisticas do desenho
+atual. Os padroes sao blocos de ate 100 alvos e ate 200 registros anteriores
+de contexto; registros intervenientes tambem sao preservados. Apenas os alvos
+recebem tarefa de anotacao. Replies nativos nao determinam as fronteiras.
 
 ```powershell
-discord-disentangle gold-standard `
+discord-prepare draw `
   --input <mensagens.parquet> `
+   --frame <quadro_revisado.csv> `
   --output <diretorio_de_janelas> `
-  --guild-id <guild_id> `
-  --channel-id <channel_id> `
-  --annotated-window-size 100 `
-  --context-message-count 200
+   --target-messages 100 `
+   --context-messages 200
+
+discord-prepare build-annotation-bundle `
+   --annotation-windows <diretorio_de_janelas>/annotation_windows.csv `
+   --output <novo_bundle>
 ```
 
-Esse comando legado enumera janelas sucessivas, mas nao faz sorteio
-probabilistico. Para o desenho da secao 3.2, use `sampling draw` e encaminhe seu
-`annotation_windows.csv` ao comando `build-annotation-bundle`. A selecao e suas
-probabilidades ja estarao registradas antes da anotacao.
+A selecao e suas probabilidades ficam registradas antes da anotacao. O
+enumerador legado `gold-standard`, que nao fazia sorteio probabilistico,
+foi removido junto com o executor de experimentos. As janelas da amostra atual
+nao foram redesenhadas durante essa limpeza.
 
 ## Piloto, recalibracao e relato
 

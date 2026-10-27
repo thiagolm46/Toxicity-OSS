@@ -1,7 +1,7 @@
 [project]
 name = "toxicity-oss-discord-research"
 version = "0.1.0"
-description = "Filtragem por domínio e experimentos de disentanglement em comunidades Discord"
+description = "Pipeline de dados Discord para pesquisa em Engenharia de Software"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -12,23 +12,15 @@ dependencies = [
     "pyarrow>=23.0.1",
     "pytest>=8.4.2",
     "rich>=14.3.3",
-    "scikit-learn>=1.7.0",
     "scipy>=1.15.0",
     "typer>=0.24.1",
     "zstandard>=0.25.0",
 ]
 
-[project.optional-dependencies]
-ui = [
-    "matplotlib>=3.10.0",
-    "streamlit>=1.48.0",
-]
-
 [project.scripts]
 discord-data = "discord_data.cli:main"
 discord-filter = "discord_filtering.cli:main"
-discord-disentangle = "discord_disentanglement.experiments.__main__:main"
-discord-disentangle-ui = "discord_disentanglement.ui.app:launch"
+discord-prepare = "discord_disentanglement.cli:main"
 
 [build-system]
 requires = ["hatchling"]

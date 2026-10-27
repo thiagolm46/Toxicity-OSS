@@ -74,53 +74,12 @@ SOURCE_STATUS_COLUMNS: tuple[str, ...] = (
     "native_reply_evidence",
 )
 
-MATERIALIZED_EDGE_COLUMNS: tuple[str, ...] = (
-    "sample_id",
-    "source_message_id",
-    "target_message_id",
-    "annotator_id",
-    "relation",
-    "ambiguous",
-    "confidence",
-    "notes",
-    "edge_origin",
-)
-
-COMPONENT_COLUMNS: tuple[str, ...] = (
-    "conversation_id",
-    "message_id",
-    "server_id",
-    "channel_id",
-    "component_message_count",
-)
-
-VALID_SOURCE_STATUSES = frozenset(
-    {
-        "pending",
-        "complete",
-        "no_reply",
-        "outside_context",
-        "ambiguous",
-        "new_conversation",
-    }
-)
-
-VALID_CONFIDENCE = frozenset({"high", "medium", "low"})
-
-
 @dataclass(frozen=True, slots=True)
 class AnnotationBundleArtifacts:
     messages_path: Path
     sample_messages_path: Path
     annotations_path: Path
     source_statuses_path: Path
-    summary_path: Path
-
-
-@dataclass(frozen=True, slots=True)
-class MaterializedAnnotationArtifacts:
-    edges_path: Path
-    components_path: Path
     summary_path: Path
 
 
@@ -284,79 +243,6 @@ def build_annotation_bundle(
     )
 
 
-def materialize_annotation_tables(
-    messages_path: Path,
-    sample_messages_path: Path,
-    annotations_path: Path,
-    source_statuses_path: Path,
-    output_dir: Path,
-    *,
-    include_ambiguous: bool = False,
-) -> MaterializedAnnotationArtifacts:
-    """Validate flat human labels and derive components from accepted reply edges."""
-    messages = pd.read_parquet(messages_path)
-    sample_messages = pd.read_parquet(sample_messages_path)
-    annotations = pd.read_parquet(annotations_path)
-    source_statuses = pd.read_parquet(source_statuses_path)
-    _require_columns(
-        messages,
-        {"message_id", "server_id", "channel_id"},
-    )
-    _require_columns(sample_messages, set(SAMPLE_MESSAGE_COLUMNS))
-    _require_columns(annotations, set(ANNOTATION_COLUMNS))
-    _require_columns(source_statuses, set(SOURCE_STATUS_COLUMNS))
-
-    message_by_sample = _index_sample_messages(messages, sample_messages)
-    source_status_by_key = _index_source_statuses(source_statuses, message_by_sample)
-    materialized_edges = _validate_annotations(
-        annotations,
-        message_by_sample=message_by_sample,
-        source_status_by_key=source_status_by_key,
-        include_ambiguous=include_ambiguous,
-    )
-    materialized_edges.extend(
-        _new_conversation_self_links(source_statuses, message_by_sample)
-    )
-    edges = pd.DataFrame.from_records(materialized_edges, columns=MATERIALIZED_EDGE_COLUMNS)
-    components = _build_components(edges, message_by_sample)
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    edges_path = output_dir / "human_reply_edges.parquet"
-    components_path = output_dir / "human_reply_components.parquet"
-    summary_path = output_dir / "human_annotation_summary.json"
-    edges.to_parquet(edges_path, index=False)
-    components.to_parquet(components_path, index=False)
-    summary_path.write_text(
-        json.dumps(
-            {
-                "messages_path": str(messages_path),
-                "sample_messages_path": str(sample_messages_path),
-                "annotations_path": str(annotations_path),
-                "source_statuses_path": str(source_statuses_path),
-                "annotation_unit": "directed_reply_edge",
-                "conversation_id_rule": "undirected_connected_components_of_accepted_human_edges",
-                "include_ambiguous": include_ambiguous,
-                "reply_edges_submitted": int((annotations["relation"] == "reply").sum()),
-                "reply_edges_materialized": int((edges["relation"] == "reply").sum()),
-                "new_conversation_self_links": int(
-                    (edges["edge_origin"] == "derived_new_conversation").sum()
-                ),
-                "human_conversation_count": int(components["conversation_id"].nunique()),
-                "human_component_message_count": int(len(components)),
-            },
-            ensure_ascii=True,
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    return MaterializedAnnotationArtifacts(
-        edges_path=edges_path,
-        components_path=components_path,
-        summary_path=summary_path,
-    )
-
-
 def publish_annotation_dataset(
     bundle_dir: Path,
     native_reply_edges_path: Path,
@@ -400,7 +286,7 @@ def publish_annotation_dataset(
                 "annotation_unit": "directed_reply_edge",
                 "message_table_unit": "canonical_message",
                 "sample_message_table_unit": "sample_message_membership",
-                "conversation_id_rule": "derived_after_annotation_from_connected_components",
+                "conversation_id_rule": "not_materialized_in_preparation_pipeline",
                 "native_reply_semantics": "positive_observed_or_unknown_never_negative",
                 "files": {
                     name: {
@@ -454,195 +340,6 @@ def _empty_annotations() -> pd.DataFrame:
     )
 
 
-def _index_sample_messages(
-    messages: pd.DataFrame,
-    sample_messages: pd.DataFrame,
-) -> dict[tuple[str, str], dict[str, Any]]:
-    canonical_by_id: dict[str, dict[str, Any]] = {}
-    for message in messages.to_dict(orient="records"):
-        message_id = _required_text(message, "message_id", "messages")
-        if message_id in canonical_by_id:
-            raise ValueError(f"message_id duplicado em messages.parquet: {message_id}")
-        canonical_by_id[message_id] = message
-    indexed: dict[tuple[str, str], dict[str, Any]] = {}
-    for membership in sample_messages.to_dict(orient="records"):
-        sample_id = _required_text(membership, "sample_id", "sample_messages")
-        message_id = _required_text(membership, "message_id", sample_id)
-        key = (sample_id, message_id)
-        if key in indexed:
-            raise ValueError(f"Mensagem duplicada na amostra {sample_id}: {message_id}")
-        message = canonical_by_id.get(message_id)
-        if message is None:
-            raise ValueError(f"Participacao sem mensagem canonica: {message_id}")
-        indexed[key] = {**message, **membership}
-    return indexed
-
-
-def _index_source_statuses(
-    source_statuses: pd.DataFrame,
-    message_by_sample: dict[tuple[str, str], dict[str, Any]],
-) -> dict[tuple[str, str], dict[str, Any]]:
-    indexed: dict[tuple[str, str], dict[str, Any]] = {}
-    for status in source_statuses.to_dict(orient="records"):
-        sample_id = _required_text(status, "sample_id", "source_statuses")
-        source_id = _required_text(status, "source_message_id", sample_id)
-        source_status = _required_text(status, "source_status", sample_id)
-        key = (sample_id, source_id)
-        source = message_by_sample.get(key)
-        if source is None or bool(source["is_context"]):
-            raise ValueError(f"Fonte de status fora do trecho anotado: {source_id}")
-        if source_status not in VALID_SOURCE_STATUSES:
-            raise ValueError(f"Status de fonte invalido em {sample_id}: {source_status}")
-        if key in indexed:
-            raise ValueError(f"Status duplicado em {sample_id}: {source_id}")
-        indexed[key] = status
-    return indexed
-
-
-def _validate_annotations(
-    annotations: pd.DataFrame,
-    *,
-    message_by_sample: dict[tuple[str, str], dict[str, Any]],
-    source_status_by_key: dict[tuple[str, str], dict[str, Any]],
-    include_ambiguous: bool,
-) -> list[dict[str, Any]]:
-    materialized: list[dict[str, Any]] = []
-    for annotation in annotations.to_dict(orient="records"):
-        sample_id = _required_text(annotation, "sample_id", "annotations")
-        source_id = _required_text(annotation, "source_message_id", sample_id)
-        target_id = _required_text(annotation, "target_message_id", sample_id)
-        annotator_id = _required_text(annotation, "annotator_id", sample_id)
-        relation = _required_text(annotation, "relation", sample_id)
-        confidence = _required_text(annotation, "confidence", sample_id)
-        ambiguous = _as_bool(annotation.get("ambiguous"), "ambiguous", sample_id)
-        if relation != "reply":
-            raise ValueError(f"Relacao humana invalida em {sample_id}: {relation}")
-        if confidence not in VALID_CONFIDENCE:
-            raise ValueError(f"Confianca humana invalida em {sample_id}: {confidence}")
-        source_key = (sample_id, source_id)
-        source = message_by_sample.get(source_key)
-        target = message_by_sample.get((sample_id, target_id))
-        if source is None or bool(source["is_context"]):
-            raise ValueError(f"Fonte de aresta fora do trecho anotado: {source_id}")
-        if target is None:
-            raise ValueError(f"Alvo de aresta fora da amostra: {target_id}")
-        status = source_status_by_key.get(source_key)
-        if status is None or status["source_status"] != "complete":
-            raise ValueError(f"Aresta humana exige fonte complete: {source_id}")
-        if int(target["sequence"]) >= int(source["sequence"]):
-            raise ValueError(f"Antecedente nao e estritamente anterior: {source_id} -> {target_id}")
-        if ambiguous and not include_ambiguous:
-            continue
-        materialized.append(
-            {
-                "sample_id": sample_id,
-                "source_message_id": source_id,
-                "target_message_id": target_id,
-                "annotator_id": annotator_id,
-                "relation": relation,
-                "ambiguous": ambiguous,
-                "confidence": confidence,
-                "notes": str(annotation.get("notes") or ""),
-                "edge_origin": "human_reply",
-            }
-        )
-    return materialized
-
-
-def _new_conversation_self_links(
-    source_statuses: pd.DataFrame,
-    message_by_sample: dict[tuple[str, str], dict[str, Any]],
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for status in source_statuses.to_dict(orient="records"):
-        if status["source_status"] != "new_conversation":
-            continue
-        sample_id = str(status["sample_id"])
-        source_id = str(status["source_message_id"])
-        if (sample_id, source_id) not in message_by_sample:
-            raise ValueError(f"Nova conversa sem fonte visivel: {source_id}")
-        rows.append(
-            {
-                "sample_id": sample_id,
-                "source_message_id": source_id,
-                "target_message_id": source_id,
-                "annotator_id": _optional_text(status.get("annotator_id")) or "",
-                "relation": "new_conversation",
-                "ambiguous": _as_bool(status.get("ambiguous"), "ambiguous", sample_id),
-                "confidence": _optional_text(status.get("confidence")) or "",
-                "notes": str(status.get("notes") or ""),
-                "edge_origin": "derived_new_conversation",
-            }
-        )
-    return rows
-
-
-def _build_components(
-    edges: pd.DataFrame,
-    message_by_sample: dict[tuple[str, str], dict[str, Any]],
-) -> pd.DataFrame:
-    if edges.empty:
-        return pd.DataFrame(columns=COMPONENT_COLUMNS)
-    graph = _UnionFind()
-    metadata_by_message: dict[str, tuple[str | None, str | None]] = {}
-    for edge in edges.itertuples(index=False):
-        sample_id = str(edge.sample_id)
-        source_id = str(edge.source_message_id)
-        target_id = str(edge.target_message_id)
-        source = message_by_sample[(sample_id, source_id)]
-        target = message_by_sample[(sample_id, target_id)]
-        source_metadata = (source["server_id"], source["channel_id"])
-        target_metadata = (target["server_id"], target["channel_id"])
-        if source_metadata != target_metadata:
-            raise ValueError(f"Aresta humana cruza canais: {source_id} -> {target_id}")
-        for message_id in (source_id, target_id):
-            previous = metadata_by_message.setdefault(message_id, source_metadata)
-            if previous != source_metadata:
-                raise ValueError(f"Mensagem humana apareceu em canais distintos: {message_id}")
-        graph.union(source_id, target_id)
-    members_by_root: dict[str, list[str]] = {}
-    for message_id in metadata_by_message:
-        members_by_root.setdefault(graph.find(message_id), []).append(message_id)
-    rows: list[dict[str, Any]] = []
-    for members in members_by_root.values():
-        ordered_members = sorted(members)
-        server_id, channel_id = metadata_by_message[ordered_members[0]]
-        conversation_id = _conversation_id(str(channel_id or ""), ordered_members)
-        for message_id in ordered_members:
-            rows.append(
-                {
-                    "conversation_id": conversation_id,
-                    "message_id": message_id,
-                    "server_id": server_id,
-                    "channel_id": channel_id,
-                    "component_message_count": len(ordered_members),
-                }
-            )
-    return pd.DataFrame.from_records(rows, columns=COMPONENT_COLUMNS)
-
-
-class _UnionFind:
-    def __init__(self) -> None:
-        self.parent: dict[str, str] = {}
-
-    def find(self, item: str) -> str:
-        self.parent.setdefault(item, item)
-        if self.parent[item] != item:
-            self.parent[item] = self.find(self.parent[item])
-        return self.parent[item]
-
-    def union(self, left: str, right: str) -> None:
-        left_root = self.find(left)
-        right_root = self.find(right)
-        if left_root != right_root:
-            self.parent[right_root] = left_root
-
-
-def _conversation_id(channel_id: str, message_ids: list[str]) -> str:
-    identifier = (channel_id + "\0" + "\0".join(message_ids)).encode("utf-8")
-    return f"HUMAN_{hashlib.sha1(identifier).hexdigest()[:12]}"
-
-
 def _require_columns(frame: pd.DataFrame, required: set[str]) -> None:
     missing = required.difference(frame.columns)
     if missing:
@@ -687,14 +384,6 @@ def _optional_int(value: Any) -> int | None:
     if value is None or pd.isna(value):
         return None
     return int(value)
-
-
-def _as_bool(value: Any, field: str, sample_id: str) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str) and value.strip().casefold() in {"true", "false"}:
-        return value.strip().casefold() == "true"
-    raise ValueError(f"{field} deve ser booleano na amostra {sample_id}")
 
 
 def _json_text(value: Any) -> str:

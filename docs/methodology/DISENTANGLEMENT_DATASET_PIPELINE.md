@@ -1,80 +1,74 @@
-# Pipeline do Dataset de Conversas Discord
+# Pipeline de Dados de Engenharia de Software
 
-## Visao geral
+## Escopo
 
-O objetivo e construir um dataset de conversas Discord desentrelaçadas em
-comunidades de engenharia de software. O pipeline reduz progressivamente o
-universo de dados ate chegar a janelas anotadas manualmente e a um codebook
-calibrado.
+O pipeline atual prepara mensagens Discord para futura anotacao humana de
+relacoes de resposta. A pesquisa de jogos, os modelos de disentanglement,
+treinamento e avaliacao de desempenho nao fazem parte desta etapa. O nome
+interno do pacote e mantido para preservar os registros de proveniencia.
 
-## Etapa 1: selecionar servidores
+## 1. Selecionar Servidores
 
-**Pergunta:** quais servidores do Discord Unveiled pertencem ao dominio de
-engenharia de software?
+O perfil de scoring [software.engineering.v2.json](../../configs/filtering/software.engineering.v2.json)
+produz evidencia por metadados para apoiar revisao humana; afinidade nao e
+probabilidade de pertinencia. A execucao atual reteve 31 servidores.
 
-O filtro analisa metadados dos servidores, como nome, descricao e palavras-chave.
-Ele procura sinais de programacao, desenvolvimento, DevOps, linguagens,
-bancos de dados e ferramentas, e exclui dominios incompativeis, como jogos,
-NSFW e cripto.
+Registro: [SERVER_FILTERING_STAGE.md](SERVER_FILTERING_STAGE.md).
 
-**Saida:** uma lista auditavel de servidores selecionados. Ela define onde os
-dados serao coletados, mas ainda nao escolhe mensagens ou conversas.
+## 2. Selecionar Canais
 
-Detalhes: [DISCORD_UNVEILED_FILTERING.md](DISCORD_UNVEILED_FILTERING.md).
+A execucao historica combinou a lista manual com exclusao por
+`total_messages < 500 AND interacting_authors < 5`. O resultado e de 407
+canais e 11.918.028 registros. O scoring A-D de canais disponivel no motor
+nao produziu esse corpus e nao e uma etapa adicional obrigatoria.
 
-## Etapa 2: selecionar canais conversacionais
+Os valores e decisoes historicos sao preservados em pacote verificavel.
+A definicao original de `interacting_authors` nao foi recuperada: o replay
+e condicionado aos valores congelados, nao uma reconstrucao integral a partir
+das mensagens. Essa metrica nao e requisito novo para sortear janelas.
 
-**Pergunta:** dentro dos servidores selecionados, quais canais parecem conter
-conversas tecnicas entre usuarios reais?
+Registro: [CHANNEL_SELECTION_STAGE.md](CHANNEL_SELECTION_STAGE.md).
 
-O filtro combina relevancia tecnica e adequacao conversacional. A relevancia
-tecnica usa metadados e conteudo. A adequacao conversacional verifica se ha
-participacao de varios autores humanos, interacoes por replies ou menções,
-alternancia entre autores, baixa concentracao em uma unica pessoa e baixa
-proporcao de bots.
+## 3. Caracterizar, Sortear e Auditar
 
-**Saida:** canais priorizados para anotacao. Apenas canais tecnicamente A,
-conversacionalmente adequados e com volume suficiente entram automaticamente
-na fila principal; os demais podem ser revisados manualmente.
+`discord-prepare population` descreve volumes, autores, cobertura temporal,
+replies, antecedentes, ausencia de conteudo e concentracao. A definicao atual
+de nao utilizavel e exclusivamente ausencia simultanea de texto e midia.
 
-Detalhes: [DISCORD_UNVEILED_FILTERING.md](DISCORD_UNVEILED_FILTERING.md).
+`prepare-frame` cria um cadastro separado para revisar elegibilidade. `draw`
+sorteia canais por servidor/porte, meses dentro dos canais e blocos dentro
+dos meses, sem reposicao. Preserva probabilidades, pesos, semente, contexto
+anterior e registros intervenientes; nao infere conversas nem usa predicoes.
 
-## Etapa 3: selecionar intervalos de anotacao
+`audit-sampling` verifica os artefatos congelados, sem filtrar ou substituir
+janelas. A execucao vigente e `sampling_pilot_v1`, com auditoria
+`sampling_design_audit_v3`. O sorteio piloto produziu 132 canais, 390 janelas
+e 18.012 alvos. Testes e auditoria de probabilidades nao demonstram, por si,
+adequacao semantica ou acordo entre anotadores.
 
-**Pergunta:** quais trechos de cada canal relevante devem ser classificados
-para representar diferentes momentos da comunidade?
+Registros: [DISENTANGLEMENT_SAMPLING.md](DISENTANGLEMENT_SAMPLING.md),
+[POPULATION_CHARACTERIZATION.md](POPULATION_CHARACTERIZATION.md),
+[SAMPLING_DESIGN_AUDIT.md](SAMPLING_DESIGN_AUDIT.md) e
+[SAMPLING_EXPERIMENTS.md](SAMPLING_EXPERIMENTS.md).
 
-A amostragem seleciona janelas continuas de mensagens em pontos temporais
-distintos do canal. Cada janela preserva mensagens anteriores como contexto,
-mas apenas as mensagens-alvo entram na quantidade anotada. O tamanho da
-amostra e justificado para estimar propriedades conversacionais, como a
-proporcao de mensagens com antecedente semantico.
+## 4. Preparar e Calibrar a Anotacao
 
-**Saida:** um conjunto rastreavel de intervalos temporais por canal, com meta
-de mensagens-alvo, contexto, estrato temporal e semente de selecao.
+`build-annotation-bundle` transforma as janelas sorteadas em tabelas de
+mensagens, pertencimentos, arestas humanas e estados das fontes.
+`publish-annotation-dataset` reune os insumos de anotacao em um diretorio
+autocontido, com manifesto e codebook. Nenhuma anotacao humana e inventada.
 
-Detalhes: [DISENTANGLEMENT_SAMPLING.md](DISENTANGLEMENT_SAMPLING.md).
+O codebook ainda deve ser calibrado por anotadores. Native replies sao silver
+positivo observado, nao ground truth semantico; ausencia de reply nao e
+evidencia negativa. Modelos e avaliacao so serao reconsiderados quando os dados
+e rotulos estiverem prontos e versionados.
 
-## Etapa 4: definir o codebook e executar o piloto
+Registro: [ANNOTATION_CODEBOOK.md](ANNOTATION_CODEBOOK.md).
 
-**Pergunta:** como os anotadores devem decidir, de forma consistente, se uma
-mensagem responde a outra ou inicia uma nova conversa?
+## Reproducibilidade e Limpeza
 
-Um piloto de classificacao aplica e aperfeicoa o codebook nas janelas
-selecionadas. O piloto registra replies semanticos, ausencia de reply,
-antecedentes fora do contexto, ambiguidade e inicios de conversa. As rodadas
-piloto servem para comparar discordancias, consolidar regras e preparar a
-anotacao em escala.
-
-**Saida:** codebook validado, exemplos de decisoes e um protocolo consistente
-para produzir arestas humanas. As conversas finais sao derivadas dessas
-arestas, e nao atribuídas diretamente pelo anotador.
-
-Detalhes: [ANNOTATION_CODEBOOK.md](ANNOTATION_CODEBOOK.md).
-
-## Resultado esperado
-
-O pipeline produz um dataset rastreavel: comunidades de software, canais com
-interacao humana, janelas temporalmente distribuídas e anotacoes humanas de
-relacoes de resposta. Cada etapa preserva seus criterios e artefatos para que
-as decisoes possam ser auditadas e recalculadas.
+As fontes, manifestos e snapshots que sustentam o resultado atual permanecem
+preservados. `scripts/cleanup_legacy.py` registra a remocao de resultados
+obsoletos sem tocar no corpus, na amostra atual ou na auditoria vigente.
+O historico Git permite consultar o codigo experimental removido; ele nao e
+uma dependencia para executar as etapas acima.

@@ -8,6 +8,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
+from discord_filtering.channel_selection import channel_decisions
 from discord_filtering.storage import atomic_write_bytes, sha256_file
 
 
@@ -98,6 +99,7 @@ def filter_messages(excluded_channel_ids: set[str]) -> tuple[int, int]:
                 "remaining_messages": output_rows,
             },
             "source_data_policy": "read_only_immutable",
+            "reproducibility_scope": "decision replay from frozen statistics; historical interacting_authors predicate unrecovered",
             "output": {
                 "path": str(OUTPUT_PATH.resolve()),
                 "format": "parquet",
@@ -120,25 +122,14 @@ def main() -> None:
         for line in EXCLUSION_PATH.read_text(encoding="utf-8").splitlines()
         if line.strip()
     }
-    statistics = pd.read_parquet(STATISTICS_PATH)
-    required_columns = {
-        "channel_id",
-        "channel_name",
-        "guild_name",
-        "total_messages",
-        "interacting_authors",
-    }
-    missing_columns = sorted(required_columns - set(statistics.columns))
-    if missing_columns:
-        raise ValueError(
-            f"{STATISTICS_PATH} is missing columns: {', '.join(missing_columns)}"
-        )
-
-    manual_exclusion_mask = statistics["channel_name"].isin(excluded_names)
-    low_activity_mask = (
-        (statistics["total_messages"] < MIN_MESSAGES)
-        & (statistics["interacting_authors"] < MIN_INTERACTING_AUTHORS)
+    statistics = channel_decisions(
+        pd.read_parquet(STATISTICS_PATH),
+        excluded_names,
+        minimum_messages=MIN_MESSAGES,
+        minimum_interacting_authors=MIN_INTERACTING_AUTHORS,
     )
+    manual_exclusion_mask = statistics["manual_excluded"]
+    low_activity_mask = statistics["low_activity_excluded"]
     excluded_mask = manual_exclusion_mask | low_activity_mask
     excluded = statistics.loc[excluded_mask]
     remaining = statistics.loc[~excluded_mask]
@@ -146,6 +137,7 @@ def main() -> None:
     excluded_channel_ids = set(excluded["channel_id"].astype(str))
     overlap_count = int((manual_exclusion_mask & low_activity_mask).sum())
 
+    print("Execucao historica: interacting_authors e usado como valor congelado, sem definicao recuperada.")
     print(f"Canais antes: {len(statistics)}")
     print(f"Removidos pela lista: {int(manual_exclusion_mask.sum())}")
     print(f"Removidos pelos limites de atividade: {int(low_activity_mask.sum())}")

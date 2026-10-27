@@ -301,12 +301,12 @@ def characterize_population(
     return summary
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Characterize retained Discord channels before sampling windows.")
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--memory-limit", default="2GB")
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(argv)
     summary = characterize_population(arguments.input, arguments.output, memory_limit=arguments.memory_limit)
     print(json.dumps(summary, default=str, indent=2))
     print(f"Reports: {arguments.output.resolve()}")

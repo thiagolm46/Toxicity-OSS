@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from discord_disentanglement.annotation_bundle import build_annotation_bundle
+from discord_disentanglement.annotation_bundle import build_annotation_bundle, publish_annotation_dataset
 from discord_disentanglement.sampling import prepare_channel_frame, sample_corpus, select_hierarchical_windows
 from discord_disentanglement.sampling_audit import audit_sample, check_selection, context_sensitivity, known_total_variance, native_reply_diagnostics, window_diagnostics
 
@@ -141,6 +141,17 @@ class SamplingTests(unittest.TestCase):
             self.assertEqual(payload[-1]["attachments"][0]["url"], "https://example.org/image.png")
             bundle = build_annotation_bundle(root / "draw/annotation_windows.csv", root / "bundle")
             self.assertEqual(len(pd.read_parquet(bundle.source_statuses_path)), 4)
+            native_edges = root / "native_edges.parquet"
+            pd.DataFrame([{"source_message_id": "3", "target_message_id": "1"}]).to_parquet(native_edges, index=False)
+            codebook = root / "CODEBOOK.md"
+            codebook.write_text("# Annotation protocol\n", encoding="utf-8")
+            published = publish_annotation_dataset(root / "bundle", native_edges, codebook, root / "published")
+            publication = json.loads(published.manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(publication["counts"]["human_annotation_edge_count"], 0)
+            self.assertEqual(publication["counts"]["silver_native_reply_edge_count"], 1)
+            self.assertEqual(len(publication["files"]), 6)
+            with self.assertRaises(FileExistsError):
+                publish_annotation_dataset(root / "bundle", native_edges, codebook, root / "published")
             sample_corpus(source, frame_path, root / "repeated", **options)
             self.assertEqual((root / "draw/selected_windows.csv").read_bytes(), (root / "repeated/selected_windows.csv").read_bytes())
             sample_corpus(source, frame_path, root / "subsample", target_messages=2,
