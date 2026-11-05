@@ -8,7 +8,9 @@ from discord_disentanglement.annotation_bundle import build_annotation_bundle, p
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Software-engineering data preparation; no model training or inference.")
+    parser = argparse.ArgumentParser(
+        description="TangleTrace SIGNAL: software-engineering data preparation; no model training or inference."
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     for command, description in (
         ("population", "Characterize retained channels."),

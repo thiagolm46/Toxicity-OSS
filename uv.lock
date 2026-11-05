@@ -313,7 +313,7 @@ wheels = [
 ]
 
 [[package]]
-name = "toxicity-oss-discord-research"
+name = "tangletrace-signal"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

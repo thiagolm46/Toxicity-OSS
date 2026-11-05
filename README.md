@@ -1,10 +1,19 @@
-# Toxicity-OSS: Reproducible Discord Filtering
+# TangleTrace SIGNAL
 
-An auditable, profile-driven pipeline for filtering **Discord Unveiled** into
-a software engineering corpus. It covers server scoring, explicit human
+**Corpus Preparation & Sampling** (`tangletrace-signal`)
+
+**TangleTrace: An Auditable Workbench for Discord Conversation Annotation**
+
+TangleTrace combines SIGNAL with **TangleTrace BETWEEN**
+(`tangletrace-between`), the separate **Reply-Link Annotation & Review**
+application. This repository contains SIGNAL only; BETWEEN is developed
+separately. SIGNAL was previously called Toxicity-OSS.
+
+SIGNAL is an auditable, profile-driven pipeline for filtering **Discord Unveiled**
+into a software engineering corpus. It covers server scoring, explicit human
 server review, message extraction, channel scoring and channel selection.
 Optional stages characterize the retained population and prepare samples
-for future annotation.
+for annotation in BETWEEN.
 
 **Start with the [English reproducibility guide](reproducibility/README.md).**
 It includes executable PowerShell commands, input/output contracts, scoring
@@ -24,9 +33,10 @@ uv run --locked python -m discord_data --help
 uv run --locked python -m discord_disentanglement --help
 ```
 
-Installed entry points are `discord-data`, `discord-filter` and
-`discord-prepare`. Examples use module commands through `uv run --locked`
-so virtual-environment activation is unnecessary.
+The Python distribution is named `tangletrace-signal`; its existing entry
+points remain `discord-data`, `discord-filter` and `discord-prepare`.
+Examples use module commands through `uv run --locked` so virtual-environment
+activation is unnecessary.
 
 ## Pipeline
 
@@ -43,6 +53,15 @@ The current server profile is **scoring-only**: it does not automatically
 accept servers and does not define channel scoring. The separate A-D channel
 scorer is supported, but **did not produce the current retained corpus**.
 That corpus uses the explicit volume/participant rule below.
+
+## Handoff to BETWEEN
+
+A sample contains `sampled_messages.parquet`, `selected_windows.csv` and
+`annotation_windows.csv`. BETWEEN can import the sample directory containing
+the first two files or the windows CSV. The canonical annotation bundle is a
+separate interchange output, not BETWEEN's direct import format. See
+[downstream preparation](reproducibility/05-validation-and-preparation.md)
+for the sampling and handoff steps.
 
 ## Current Selection Rule
 

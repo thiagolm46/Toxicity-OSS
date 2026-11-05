@@ -123,7 +123,7 @@ def _cmd_server_review(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m discord_filtering",
-        description="Auditable server and channel filtering using versioned external profiles.",
+        description="TangleTrace SIGNAL: auditable server and channel filtering using versioned external profiles.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

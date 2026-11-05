@@ -31,7 +31,7 @@ from .remote import (
 console = Console()
 app = typer.Typer(
     add_completion=False,
-    help="Acquisition, extraction and local database for the Discord Unveiled corpus.",
+    help="TangleTrace SIGNAL: acquisition, extraction and local database for the Discord Unveiled corpus.",
 )
 
 

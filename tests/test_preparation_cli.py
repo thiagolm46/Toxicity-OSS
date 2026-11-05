@@ -8,7 +8,11 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 from unittest.mock import patch
 
+from typer.testing import CliRunner
+
+from discord_data.cli import app as data_app
 from discord_disentanglement.cli import build_parser, main
+from discord_filtering.cli import build_parser as build_filtering_parser
 
 
 class PreparationCliTests(unittest.TestCase):
@@ -18,10 +22,24 @@ class PreparationCliTests(unittest.TestCase):
             self.assertFalse((root / "discord_disentanglement" / directory).exists())
         self.assertFalse((root / "configs/filtering/games.v1.json").exists())
         project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+        self.assertEqual(project["name"], "tangletrace-signal")
         self.assertEqual(set(project["scripts"]), {"discord-data", "discord-filter", "discord-prepare"})
         locked = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
         names = {package["name"] for package in locked["package"]}
+        local_packages = [
+            package["name"]
+            for package in locked["package"]
+            if package.get("source", {}).get("editable") == "."
+        ]
+        self.assertEqual(local_packages, [project["name"]])
         self.assertTrue(names.isdisjoint({"scikit-learn", "streamlit", "matplotlib"}))
+
+    def test_primary_cli_help_uses_signal_name(self):
+        result = CliRunner().invoke(data_app, ["--help"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("TangleTrace SIGNAL", result.output)
+        self.assertIn("TangleTrace SIGNAL", build_filtering_parser().format_help())
+        self.assertIn("TangleTrace SIGNAL", build_parser().format_help())
 
     def test_pipeline_overview_links_point_to_retained_files(self):
         root = Path(__file__).resolve().parents[1]

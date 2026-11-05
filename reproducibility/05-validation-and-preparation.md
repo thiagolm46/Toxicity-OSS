@@ -90,6 +90,15 @@ For the historical frame and corpus, the reference draw had 107 channels,
 change these results. The audit checks the frozen draw; it does not silently
 filter or redraw it. Correct probabilities do not certify semantic usefulness.
 
+## Handoff to TangleTrace BETWEEN
+
+TangleTrace SIGNAL (`tangletrace-signal`) writes the sample directory in the
+preceding step. BETWEEN (`tangletrace-between`) is a separate local annotation
+application. It can import that directory, containing `sampled_messages.parquet`
+and `selected_windows.csv`, or the `annotation_windows.csv` file. The
+canonical bundle below is a separate output and is not BETWEEN's direct
+import format.
+
 ## Optional Annotation Tables
 
 ```powershell

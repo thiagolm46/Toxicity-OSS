@@ -1,4 +1,9 @@
-# Reproducing the Discord Unveiled Filter
+# Reproducing TangleTrace SIGNAL
+
+SIGNAL (`tangletrace-signal`) prepares and samples Discord corpora for
+TangleTrace, an auditable workbench for conversation annotation.
+**TangleTrace BETWEEN** (`tangletrace-between`) is the separate reply-link
+annotation and review application; it is not part of this repository.
 
 This is the English operational manual. It is independent of the preserved
 research notes in [docs](../docs). Run every command from the repository root
@@ -28,7 +33,8 @@ Frozen Discord Unveiled archive + accepted IDs
   -> retained corpus + statistics + decisions + manifests
 
 Optional: extracted messages + channel-capable profile -> channel scores A-D
-Optional: retained corpus -> population -> reviewed frame -> sample -> annotation tables
+Optional: retained corpus -> population -> reviewed frame -> sample
+Optional: sample -> BETWEEN (direct import) OR canonical annotation tables
 ```
 
 ## What "Reproducible" Means Here

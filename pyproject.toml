@@ -1,7 +1,7 @@
 [project]
-name = "toxicity-oss-discord-research"
+name = "tangletrace-signal"
 version = "0.1.0"
-description = "Reproducible Discord data filtering and preparation for software engineering research"
+description = "TangleTrace SIGNAL: auditable Discord corpus preparation and sampling"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
