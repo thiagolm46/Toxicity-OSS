@@ -1,7 +1,7 @@
 [project]
 name = "toxicity-oss-discord-research"
 version = "0.1.0"
-description = "Pipeline de dados Discord para pesquisa em Engenharia de Software"
+description = "Reproducible Discord data filtering and preparation for software engineering research"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [

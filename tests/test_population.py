@@ -10,10 +10,23 @@ from discord_disentanglement.population_report import (
     concentration_statistics,
     generate_population_report,
     markdown_table,
+    number,
 )
 
 
 class PopulationTests(unittest.TestCase):
+    def test_english_number_format_and_report_destinations(self):
+        from discord_disentanglement.population_report import DEFAULT_REPORT as population_report
+        from discord_disentanglement.sampling_audit import DEFAULT_REPORT as sampling_report
+
+        self.assertEqual(number(11897859), "11,897,859")
+        self.assertEqual(number(1234.5, 2), "1,234.50")
+        self.assertEqual(number(None), "NA")
+        root = Path(__file__).resolve().parents[1]
+        for report in (population_report, sampling_report):
+            self.assertTrue(report.is_relative_to(root / "data"))
+            self.assertFalse(report.is_relative_to(root / "docs"))
+
     def test_quality_replies_concentration_and_distinct_authors(self):
         base = {
             "guild_id": "g", "guild_name": "Guild", "channel_id": "c",
@@ -67,13 +80,13 @@ class PopulationTests(unittest.TestCase):
             report = Path(temporary) / "population.md"
             generate_population_report(output, report)
             text = report.read_text(encoding="utf-8")
-            self.assertIn("| Registros totais | 13 |", text)
-            self.assertIn("| Autores humanos distintos no corpus | 2 |", text)
-            self.assertIn("Inventario completo dos canais", text)
-            self.assertIn("nao e uma contagem global", text)
-            self.assertIn("medias de quantis", text)
-            self.assertIn("| Nao utilizaveis: sem texto nem midia registrada | 1 |", text)
-            self.assertNotIn("Uniao de registros nao utilizaveis", text)
+            self.assertIn("| Total records | 13 |", text)
+            self.assertIn("| Distinct human authors in the corpus | 2 |", text)
+            self.assertIn("Complete channel inventory", text)
+            self.assertIn("is not a global count", text)
+            self.assertIn("nor averages quantiles", text)
+            self.assertIn("| Unusable: no recorded text or media | 1 |", text)
+            self.assertNotIn("Union of unusable records", text)
             before = report.read_bytes()
             generate_population_report(output, report, overwrite=True)
             self.assertEqual(report.read_bytes(), before)

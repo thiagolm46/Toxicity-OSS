@@ -171,7 +171,7 @@ class SamplingTests(unittest.TestCase):
             audit = audit_sample(root / "draw", root / "audit", root / "report.md")
             self.assertTrue(audit["all_checks_passed"])
             self.assertEqual(audit["target_messages"], 4)
-            self.assertIn("Desenho amostral", (root / "report.md").read_text(encoding="utf-8"))
+            self.assertIn("Sampling design", (root / "report.md").read_text(encoding="utf-8"))
             with self.assertRaises(FileExistsError):
                 audit_sample(root / "draw", root / "audit", root / "report.md")
             repeated_audit = audit_sample(root / "draw", root / "repeated_audit", root / "report.md", overwrite_report=True)

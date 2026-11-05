@@ -3,7 +3,7 @@
   "profile_id": "software-engineering",
   "profile_version": "1.1.0",
   "domain": "software",
-  "description": "Perfil para selecionar comunidades de engenharia de software usando metadados textuais curados do Discord.",
+  "description": "Profile for selecting software engineering communities using curated Discord text metadata.",
   "server": {
     "fields": ["name", "description", "about", "reasons_to_join", "keywords"],
     "field_weights": {"name": 1.5, "description": 1.0, "about": 0.8, "reasons_to_join": 0.9, "keywords": 1.75},

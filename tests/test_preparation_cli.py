@@ -25,7 +25,13 @@ class PreparationCliTests(unittest.TestCase):
 
     def test_pipeline_overview_links_point_to_retained_files(self):
         root = Path(__file__).resolve().parents[1]
-        for relative in ("README.md", "annotations/README.md", "docs/methodology/DISENTANGLEMENT_DATASET_PIPELINE.md", "docs/methodology/DISCORD_UNVEILED_FILTERING.md"):
+        documents = [
+            "README.md", "annotations/README.md",
+            "docs/methodology/DISENTANGLEMENT_DATASET_PIPELINE.md",
+            "docs/methodology/DISCORD_UNVEILED_FILTERING.md",
+            *(str(path.relative_to(root)) for path in (root / "reproducibility").glob("*.md")),
+        ]
+        for relative in documents:
             document = root / relative
             for target in re.findall(r"\[[^\]]+\]\(([^)]+)\)", document.read_text(encoding="utf-8")):
                 parsed = urlsplit(target)

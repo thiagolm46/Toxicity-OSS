@@ -1,4 +1,4 @@
-"""Aquisição, extração e acesso local aos dados Discord-Unveiled."""
+"""Acquisition, extraction and local access to Discord Unveiled data."""
 
 from .extraction import load_selected_servers
 from .remote import iter_resumable_remote_bytes, probe_remote_total_bytes

@@ -3,7 +3,7 @@
   "profile_id": "software-engineering-server-scoring",
   "profile_version": "2.2.0",
   "domain": "software",
-  "description": "Perfil exclusivamente de pontuacao para medir afinidade de servidores com engenharia de software a partir de metadados curados do Discord. Nao define selecao de servidores nem classificacao de canais.",
+  "description": "Scoring-only profile measuring server affinity with software engineering from curated Discord metadata. Defines neither server selection nor channel classification.",
   "server": {
     "fields": ["name", "description", "about", "reasons_to_join", "keywords"],
     "field_weights": {

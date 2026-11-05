@@ -3,7 +3,7 @@
   "profile_id": "software",
   "profile_version": "1.5.0",
   "domain": "software",
-  "description": "Perfil interpretável para selecionar servidores e canais de engenharia de software e OSS.",
+  "description": "Interpretable profile for selecting software engineering and OSS servers and channels.",
   "server": {
     "fields": [
       "name",

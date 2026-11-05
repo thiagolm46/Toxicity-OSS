@@ -1,4 +1,4 @@
-"""Criação das views DuckDB para análise exploratória local."""
+"""Create DuckDB views for local exploratory analysis."""
 
 from pathlib import Path
 
@@ -15,7 +15,7 @@ def create_database(
 ) -> list[str]:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     if database_path.exists() and not overwrite:
-        raise FileExistsError(f"O banco já existe: {database_path}")
+        raise FileExistsError(f"Database already exists: {database_path}")
     if database_path.exists():
         database_path.unlink()
 

@@ -1,4 +1,4 @@
-"""Interface de linha de comando para aquisição e extração de dados."""
+"""Command-line interface for data acquisition and extraction."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from .remote import (
 console = Console()
 app = typer.Typer(
     add_completion=False,
-    help="Aquisição, extração e banco local do corpus Discord-Unveiled.",
+    help="Acquisition, extraction and local database for the Discord Unveiled corpus.",
 )
 
 
@@ -40,16 +40,16 @@ def _render(path: Path) -> str:
 
 
 def _print_stats(stats: dict[str, int], output_path: Path) -> None:
-    console.print(f"[green]Servidores processados:[/green] {stats['servers']:,}")
-    console.print(f"[green]Mensagens gravadas:[/green] {stats['messages']:,}")
+    console.print(f"[green]Servers processed:[/green] {stats['servers']:,}")
+    console.print(f"[green]Messages written:[/green] {stats['messages']:,}")
     if stats["skipped_channels"]:
         console.print(
-            "[green]Mensagens removidas pelo filtro de canais:[/green] "
+            "[green]Messages removed by channel filters:[/green] "
             f"{stats['skipped_channels']:,}"
         )
     if stats["invalid_json"]:
         console.print(
-            f"[yellow]Linhas JSON inválidas ignoradas:[/yellow] {stats['invalid_json']:,}"
+            f"[yellow]Invalid JSON lines skipped:[/yellow] {stats['invalid_json']:,}"
         )
     console.print(f"[green]Parquet:[/green] {_render(output_path)}")
 
@@ -58,22 +58,22 @@ def _print_stats(stats: dict[str, int], output_path: Path) -> None:
 def download_metadata(
     output_path: Path = typer.Option(
         Path("data/raw/server_metadata/servers_metadata.txt"),
-        help="Destino dos metadados de servidores.",
+        help="Destination for server metadata.",
     ),
 ) -> None:
     download_file(METADATA_REMOTE_PATH, output_path, chunk_size=8 * 1024 * 1024)
-    console.print(f"[green]Metadados salvos em:[/green] {_render(output_path)}")
+    console.print(f"[green]Metadata saved to:[/green] {_render(output_path)}")
 
 
 @app.command("download-dataset")
 def download_dataset(
     output_path: Path = typer.Option(
-        Path("data/raw/dataset.zst"), help="Destino do dataset completo."
+        Path("data/raw/dataset.zst"), help="Destination for the complete dataset."
     ),
 ) -> None:
-    console.print("[yellow]O arquivo completo tem aproximadamente 118 GB.[/yellow]")
+    console.print("[yellow]The complete archive is approximately 118 GB.[/yellow]")
     download_file(DATASET_REMOTE_PATH, output_path, chunk_size=8 * 1024 * 1024)
-    console.print(f"[green]Dataset salvo em:[/green] {_render(output_path)}")
+    console.print(f"[green]Dataset saved to:[/green] {_render(output_path)}")
 
 
 @app.command("extract-local")
@@ -82,9 +82,9 @@ def extract_local(
         Path("data/raw/dataset.zst"), exists=True, dir_okay=False
     ),
     selected_servers_path: Path = typer.Option(
-        ..., exists=True, dir_okay=False, help="Parquet auditável de servidores selecionados."
+        ..., exists=True, dir_okay=False, help="Auditable selected-server Parquet."
     ),
-    output_path: Path = typer.Option(..., help="Novo Parquet de mensagens."),
+    output_path: Path = typer.Option(..., help="New message Parquet."),
     exclude_bots: bool = typer.Option(True),
     batch_size: int = typer.Option(50_000, min=1_000),
     include_channel_regex: list[str] | None = typer.Option(None, "--include-channel-regex"),
@@ -116,9 +116,9 @@ def extract_local(
 @app.command("extract-remote")
 def extract_remote(
     selected_servers_path: Path = typer.Option(
-        ..., exists=True, dir_okay=False, help="Parquet auditável de servidores selecionados."
+        ..., exists=True, dir_okay=False, help="Auditable selected-server Parquet."
     ),
-    output_path: Path = typer.Option(..., help="Novo Parquet de mensagens."),
+    output_path: Path = typer.Option(..., help="New message Parquet."),
     remote_path: str = typer.Option(DATASET_REMOTE_PATH),
     exclude_bots: bool = typer.Option(True),
     batch_size: int = typer.Option(50_000, min=1_000),
@@ -147,14 +147,14 @@ def extract_remote(
                 DownloadColumn(binary_units=True),
                 console=console,
             ) as progress:
-                download_task = progress.add_task("Download e descompactação", total=total)
-                server_task = progress.add_task("Servidores", total=len(guild_lookup))
+                download_task = progress.add_task("Download and decompression", total=total)
+                server_task = progress.add_task("Servers", total=len(guild_lookup))
                 byte_iterator = iter_resumable_remote_bytes(
                     client,
                     url,
                     chunk_size=download_chunk_mb * 1024 * 1024,
                     on_retry=lambda attempt, offset: console.print(
-                        f"[yellow]Retomada {attempt} após {offset:,} bytes.[/yellow]"
+                        f"[yellow]Resume attempt {attempt} after {offset:,} bytes.[/yellow]"
                     ),
                 )
                 reader = IteratorReader(
@@ -172,7 +172,7 @@ def extract_remote(
                             include_channel_patterns=include,
                             exclude_channel_patterns=exclude,
                             on_server=lambda guild_id: progress.update(
-                                server_task, advance=1, description=f"Servidor {guild_id}"
+                                server_task, advance=1, description=f"Server {guild_id}"
                             ),
                         )
     except (OSError, RuntimeError, ValueError) as error:
@@ -198,7 +198,7 @@ def init_duckdb(
         )
     except (FileExistsError, OSError, RuntimeError) as error:
         raise typer.BadParameter(str(error)) from error
-    console.print(f"[green]DuckDB criado em:[/green] {_render(database_path)}")
+    console.print(f"[green]DuckDB created at:[/green] {_render(database_path)}")
     console.print("[green]Views:[/green] " + ", ".join(views))
 
 

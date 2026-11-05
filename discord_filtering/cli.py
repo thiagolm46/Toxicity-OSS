@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .profile import ProfileValidationError, load_profile
+from .server_review import apply_server_review, prioritize_servers
 from .service import (
     filter_servers,
     score_channels,
@@ -110,40 +111,60 @@ def _cmd_score_channels(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_server_review(args: argparse.Namespace) -> int:
+    if args.command == "prioritize-servers":
+        output, manifest = prioritize_servers(args.input, args.output)
+    else:
+        output, manifest = apply_server_review(args.input, args.review, args.output)
+    print(json.dumps({"output": str(output.resolve()), "manifest": str(manifest.resolve())}, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m discord_filtering",
-        description="Filtragem auditável de servidores e canais por perfil externo versionado.",
+        description="Auditable server and channel filtering using versioned external profiles.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    validate = subparsers.add_parser("validate-profile", help="validar um perfil JSON sem executar filtros")
+    validate = subparsers.add_parser("validate-profile", help="validate a JSON profile without running filters")
     validate.add_argument("--profile", type=_path, required=True)
     validate.set_defaults(handler=_cmd_validate_profile)
 
-    select = subparsers.add_parser("select-servers", help="classificar metadados de servidores")
+    select = subparsers.add_parser("select-servers", help="classify server metadata (score only if selection is undefined)")
     select.add_argument("--profile", type=_path, required=True)
     select.add_argument("--input", type=_path, required=True)
     select.add_argument("--output", type=_path, required=True)
     select.add_argument(
         "--include-rejected",
         action="store_true",
-        help="emitir também candidatos rejeitados para auditoria/calibração",
+        help="also emit rejected candidates for auditing/calibration",
     )
     select.add_argument("--overwrite", action="store_true")
     select.set_defaults(handler=_cmd_select_servers)
 
-    score = subparsers.add_parser("score-channels", help="pontuar canais a partir de mensagens Parquet")
+    prioritize = subparsers.add_parser("prioritize-servers", help="build a review queue using the upper Tukey fence of positive affinity scores")
+    prioritize.add_argument("--input", type=_path, required=True)
+    prioritize.add_argument("--output", type=_path, required=True)
+    prioritize.set_defaults(handler=_cmd_server_review)
+
+    review = subparsers.add_parser("apply-server-review", help="materialize accepted servers from an explicit accept/reject CSV")
+    review.add_argument("--input", type=_path, required=True, help="candidate queue, not the full scored catalogue")
+    review.add_argument("--review", type=_path, required=True)
+    review.add_argument("--output", type=_path, required=True)
+    review.set_defaults(handler=_cmd_server_review)
+
+    score = subparsers.add_parser("score-channels", help="score channels from message Parquet")
     score.add_argument("--profile", type=_path, required=True)
     score.add_argument("--input", type=_path, required=True)
     score.add_argument("--output", type=_path, required=True)
     scope = score.add_mutually_exclusive_group(required=True)
-    scope.add_argument("--guild-name", help="nome exato do servidor; use Neo4j no piloto")
-    scope.add_argument("--guild-id", help="ID exato do servidor")
+    scope.add_argument("--guild-name", help="exact server name; use Neo4j for the pilot")
+    scope.add_argument("--guild-id", help="exact server ID")
     scope.add_argument(
         "--all-guilds",
         action="store_true",
-        help="carregar todos os servidores explicitamente (pode exigir muita memória)",
+        help="explicitly load all servers (may require substantial memory)",
     )
     score.add_argument("--min-messages", type=int, default=50)
     score.add_argument("--overwrite", action="store_true")

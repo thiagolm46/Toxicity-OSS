@@ -1,4 +1,4 @@
-"""Download remoto resiliente do dataset hospedado no Hugging Face."""
+"""Resilient remote download of the dataset hosted on Hugging Face."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def iter_resumable_remote_bytes(
     max_retries: int = MAX_RETRIES,
     on_retry: Callable[[int, int], None] | None = None,
 ) -> Iterator[bytes]:
-    """Entrega bytes em sequência e retoma após falhas de transporte."""
+    """Yield sequential bytes and resume after transport failures."""
     downloaded_bytes = 0
     retry_count = 0
 
@@ -71,12 +71,12 @@ def iter_resumable_remote_bytes(
                 else:
                     if response.status_code != httpx.codes.PARTIAL_CONTENT:
                         response.raise_for_status()
-                        raise RuntimeError("O servidor remoto não aceitou retomar o download.")
+                        raise RuntimeError("The remote server refused to resume the download.")
                     content_range = response.headers.get("content-range")
                     if not content_range or not content_range.startswith(
                         f"bytes {downloaded_bytes}-"
                     ):
-                        raise RuntimeError("O servidor retornou uma faixa de bytes inesperada.")
+                        raise RuntimeError("The server returned an unexpected byte range.")
 
                 for chunk in response.iter_raw(chunk_size=chunk_size):
                     if chunk:
@@ -87,7 +87,7 @@ def iter_resumable_remote_bytes(
             retry_count += 1
             if retry_count > max_retries:
                 raise RuntimeError(
-                    "Falha no download após todas as tentativas de retomada."
+                    "Download failed after all resume attempts."
                 ) from error
             if on_retry is not None:
                 on_retry(retry_count, downloaded_bytes)
@@ -108,7 +108,7 @@ def download_file(remote_path: str, output_path: Path, *, chunk_size: int) -> No
 
 
 class IteratorReader(io.RawIOBase):
-    """Adapta um iterador de bytes para APIs que esperam um arquivo binário."""
+    """Adapt a byte iterator for APIs expecting a binary file."""
 
     def __init__(
         self,

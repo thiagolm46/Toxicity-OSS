@@ -109,7 +109,7 @@ def build_annotation_bundle(
         messages = _json_list(window.messages_json, "messages_json", sample_id)
         for message in messages:
             if not isinstance(message, dict):
-                raise ValueError(f"Mensagem invalida na amostra {sample_id}")
+                raise ValueError(f"Invalid message in sample {sample_id}")
             message_id = _required_text(message, "message_id", sample_id)
             is_context = message.get("window_role") == "context"
             message_row = {
@@ -161,7 +161,7 @@ def build_annotation_bundle(
                 }
             previous = messages_by_id.setdefault(message_id, message_row)
             if previous != message_row:
-                raise ValueError(f"Metadados inconsistentes para message_id: {message_id}")
+                raise ValueError(f"Inconsistent metadata for message_id: {message_id}")
             sample_message_rows.append(
                 {
                     "sample_id": sample_id,
@@ -343,16 +343,16 @@ def _empty_annotations() -> pd.DataFrame:
 def _require_columns(frame: pd.DataFrame, required: set[str]) -> None:
     missing = required.difference(frame.columns)
     if missing:
-        raise ValueError("Janela sem colunas obrigatorias: " + ", ".join(sorted(missing)))
+        raise ValueError("Window is missing required columns: " + ", ".join(sorted(missing)))
 
 
 def _json_list(value: Any, column: str, sample_id: str) -> list[Any]:
     try:
         parsed = json.loads(str(value))
     except json.JSONDecodeError as error:
-        raise ValueError(f"JSON invalido em {column} da amostra {sample_id}") from error
+        raise ValueError(f"Invalid JSON in {column} of sample {sample_id}") from error
     if not isinstance(parsed, list):
-        raise ValueError(f"{column} deve conter uma lista na amostra {sample_id}")
+        raise ValueError(f"{column} must contain a list in sample {sample_id}")
     return parsed
 
 
@@ -360,16 +360,16 @@ def _parse_native_fields(value: Any, sample_id: str) -> dict[str, Any]:
     try:
         parsed = json.loads(str(value or "{}"))
     except json.JSONDecodeError as error:
-        raise ValueError(f"native_fields_json invalido na amostra {sample_id}") from error
+        raise ValueError(f"Invalid native_fields_json in sample {sample_id}") from error
     if not isinstance(parsed, dict):
-        raise ValueError(f"native_fields_json deve conter um objeto na amostra {sample_id}")
+        raise ValueError(f"native_fields_json must contain an object in sample {sample_id}")
     return parsed
 
 
 def _required_text(record: dict[str, Any], field: str, sample_id: str) -> str:
     value = _optional_text(record.get(field))
     if value is None:
-        raise ValueError(f"Mensagem sem {field} na amostra {sample_id}")
+        raise ValueError(f"Message is missing {field} in sample {sample_id}")
     return value
 
 

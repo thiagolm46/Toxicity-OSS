@@ -17,7 +17,7 @@ from discord_filtering.storage import atomic_write_bytes, sha256_file
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIR = ROOT / "data/processed/filtering/software/affinity_v2"
 DEFAULT_SOURCE = SOURCE_DIR / "messages_2026-09-21.parquet"
-DEFAULT_EXCLUSIONS = SOURCE_DIR / "canais_a_excluir.txt"
+DEFAULT_EXCLUSIONS = ROOT / "configs/filtering/channel_exclusions.v1.txt"
 DEFAULT_OUTPUT = ROOT / "data/processed/filtering/software/participants_v2"
 RULE_VERSION = "participants_min500_min5.v2"
 REQUIRED_COLUMNS = {"guild_id", "guild_name", "channel_id", "channel_name", "author_id", "is_bot"}

@@ -1,122 +1,110 @@
-# Toxicity-OSS: Pipeline de Dados de Engenharia de Software
+# Toxicity-OSS: Reproducible Discord Filtering
 
-Preparacao auditavel de dados Discord para futura anotacao de relacoes
-conversacionais em comunidades de Engenharia de Software. O repositorio cobre
-aquisicao, selecao de servidores e canais, caracterizacao da populacao,
-amostragem probabilistica, auditoria e preparacao de tabelas para anotacao.
+An auditable, profile-driven pipeline for filtering **Discord Unveiled** into
+a software engineering corpus. It covers server scoring, explicit human
+server review, message extraction, channel scoring and channel selection.
+Optional stages characterize the retained population and prepare samples
+for future annotation.
 
-Nao contem treinamento, inferencia, checkpoints, avaliacao de modelos de
-disentanglement ou a pesquisa de comunidades de jogos. O resultado atual e
-material preparado para anotacao, nao um benchmark humano concluido.
+**Start with the [English reproducibility guide](reproducibility/README.md).**
+It includes executable PowerShell commands, input/output contracts, scoring
+formulas, recorded review decisions, verification steps and limitations.
+The existing [research documentation](docs/methodology) is preserved in its
+original language; it is not the English reproduction manual.
 
-## Instalacao
+## Installation
+
+Requirements: Python 3.12, [uv](https://docs.astral.sh/uv/), and enough disk
+space for the chosen data acquisition route.
 
 ```powershell
-uv sync
+uv sync --locked
+uv run --locked python -m discord_filtering --help
+uv run --locked python -m discord_data --help
+uv run --locked python -m discord_disentanglement --help
 ```
 
-Comandos instalados: `discord-data`, `discord-filter` e `discord-prepare`.
-Sem instalacao dos entry points, use `python -m discord_data`,
-`python -m discord_filtering` e `python -m discord_disentanglement`.
+Installed entry points are `discord-data`, `discord-filter` and
+`discord-prepare`. Examples use module commands through `uv run --locked`
+so virtual-environment activation is unnecessary.
 
-O nome interno `discord_disentanglement` permanece para nao invalidar imports,
-comandos por modulo e registros de proveniencia existentes; ele agora contem
-somente preparacao e auditoria dos dados.
+## Pipeline
 
-## Etapas Atuais
-
-| Etapa | Implementacao | Registro metodologico |
+| Stage | Implementation | Reproduction instructions |
 | --- | --- | --- |
-| Aquisicao e extracao | [discord_data](discord_data/__main__.py) | [Servidores](docs/methodology/SERVER_FILTERING_STAGE.md) |
-| Selecao de servidores | [discord_filtering](discord_filtering/cli.py), perfis de software | [Etapa 1](docs/methodology/SERVER_FILTERING_STAGE.md) |
-| Selecao por participantes | [channel_selection.py](discord_filtering/channel_selection.py) | [Etapa 2](docs/methodology/CHANNEL_SELECTION_STAGE.md) |
-| Caracterizacao da populacao | [population.py](discord_disentanglement/population.py) e [population_report.py](discord_disentanglement/population_report.py) | [Relatorio](docs/methodology/POPULATION_CHARACTERIZATION.md) |
-| Quadro e sorteio de janelas | [sampling.py](discord_disentanglement/sampling.py) | [Desenho](docs/methodology/DISENTANGLEMENT_SAMPLING.md) |
-| Auditoria da amostra | [sampling_audit.py](discord_disentanglement/sampling_audit.py) | [Auditoria](docs/methodology/SAMPLING_DESIGN_AUDIT.md) |
-| Preparacao para anotacao | [annotation_bundle.py](discord_disentanglement/annotation_bundle.py) | [Codebook](docs/methodology/ANNOTATION_CODEBOOK.md) |
+| Acquire metadata and archive | [discord_data](discord_data/cli.py) | [Setup and sources](reproducibility/01-setup-and-sources.md) |
+| Score, prioritize and review servers | [Filtering CLI](discord_filtering/cli.py), [review](discord_filtering/server_review.py) | [Server filtering](reproducibility/02-server-filtering.md) |
+| Extract accepted servers | [Extraction](discord_data/extraction.py) | [Server filtering](reproducibility/02-server-filtering.md#3-extract-messages-for-accepted-servers) |
+| Select channels by volume and participants | [Channel selection](discord_filtering/channel_selection.py) | [Channel selection](reproducibility/03-channel-selection.md) |
+| Optional profile-based channel scoring | [Scoring engine](discord_filtering/engine.py) | [Channel scoring](reproducibility/04-channel-scoring.md) |
+| Characterize, sample, audit and prepare annotation | [Preparation CLI](discord_disentanglement/cli.py) | [Downstream preparation](reproducibility/05-validation-and-preparation.md) |
 
-O detalhamento do fluxo esta em
-[DISENTANGLEMENT_DATASET_PIPELINE.md](docs/methodology/DISENTANGLEMENT_DATASET_PIPELINE.md).
+The current server profile is **scoring-only**: it does not automatically
+accept servers and does not define channel scoring. The separate A-D channel
+scorer is supported, but **did not produce the current retained corpus**.
+That corpus uses the explicit volume/participant rule below.
 
-## Corpus e Proveniencia
+## Current Selection Rule
 
-O corpus atual e
-`data/processed/filtering/software/participants_v2/messages.parquet`:
-29 servidores, 297 canais e 11.897.859 registros.
-A selecao recalcula as estatisticas diretamente da fonte original e exige
-**pelo menos 500 registros brutos E cinco autores humanos distintos por canal**,
-alem de aplicar a lista manual de exclusao. Participacao nao exige reply,
-mencao ou conversa inferida. Os limites sao requisitos operacionais, nao uma
-garantia estatistica de qualidade.
+Keep a channel only if all three conditions hold:
 
-```powershell
-python -m discord_filtering.channel_selection select --output <nova_selecao>
-python -m discord_filtering.channel_selection verify <nova_selecao>
-```
+1. At least **500 exported message records**.
+2. At least **5 distinct human author IDs**.
+3. Its exact name is absent from the versioned manual exclusion list.
 
-Fonte, decisoes, contagens e hashes estao no manifesto da selecao. Os corpora
-e pacotes anteriores permanecem apenas como arquivo historico e nao alimentam
-a pipeline vigente. Nao sobrescreva essas execucoes.
+The unit is `(guild_id, channel_id)`. Replies, mentions and inferred
+conversations are not prerequisites. These are operational thresholds,
+not statistically calibrated guarantees of relevance or conversation quality.
 
-As mensagens brutas nao sao distribuidas pelo repositorio. Acesso e eventual
-redistribuicao devem respeitar os termos do dataset-fonte.
+The historical reference run contains **31 accepted servers** before channel
+selection and **29 servers, 297 channels and 11,897,859 records** afterwards.
+These counts apply to the frozen historical inputs, not arbitrary future
+versions of the upstream dataset.
 
-## Caracterizacao, Sorteio e Auditoria
+The repository versions the [server decisions](configs/filtering/server_review.v1.csv)
+and [channel exclusions](configs/filtering/channel_exclusions.v1.txt).
+Raw messages and generated corpora are not distributed in Git.
+Access and redistribution must comply with the upstream dataset's terms.
+Source text, server/channel names and multilingual matching patterns are
+preserved verbatim: translating them would change the filter's meaning.
 
-Os comandos abaixo gravam novos artefatos; diretorios de execucao existentes
-nao sao substituidos silenciosamente. Para uma demonstracao, informe caminhos
-novos com `--output`.
+## Verification
 
 ```powershell
-discord-prepare population --output <nova_populacao>
-discord-prepare population-report --input-dir <nova_populacao> --output <relatorio.md>
-discord-prepare prepare-frame --channels <nova_populacao>/channels.csv --output <quadro.csv>
-discord-prepare draw --frame <quadro.csv> --output <nova_amostra> --seed 20261014
-discord-prepare audit-sampling --sample <nova_amostra> --output <nova_auditoria> --report <auditoria.md>
+uv run --locked python -m pytest tests -q
 ```
 
-Consulte `discord-prepare <etapa> --help` para parametros e caminhos padrao.
-O quadro e provisorio; os estados de elegibilidade devem ser revisados antes
-de uma coleta definitiva. Somente registros sem texto e sem anexo, embed ou
-sticker registrado sao chamados de nao utilizaveis. As restricoes tecnicas de
-identificacao e ordenacao para janelas sao tratadas separadamente.
-
-A execucao atual esta em `data/processed/disentanglement/sampling_participants_v2`;
-a auditoria vigente esta em `data/processed/disentanglement/sampling_participants_audit_v2`.
-O novo sorteio produziu 107 canais, 317 janelas e 17.921 mensagens-alvo.
-Resultados de sensibilidade da auditoria nao sao experimentos de modelos.
-
-## Preparacao para Anotacao
+After running the selection workflow with a new output directory:
 
 ```powershell
-discord-prepare build-annotation-bundle `
-  --annotation-windows <nova_amostra>/annotation_windows.csv `
-  --output <novo_bundle>
+uv run --locked python -m discord_filtering.channel_selection verify `
+  data\processed\reproduction\run_001\participants
 ```
 
-O pacote separa mensagens canonicas, pertencimento alvo/contexto, arestas
-humanas e estados das fontes. Replies nativos sao evidencia silver observada;
-sua ausencia nunca e um rotulo semantico negativo. O anotador registra arestas,
-nao uma conversa prevista por algoritmo.
+Filtering outputs include SHA-256 provenance manifests. Existing artifacts
+are protected from replacement by default. Keep each run in a new directory;
+do not overwrite historical inputs or outputs.
 
-`publish-annotation-dataset` publica um bundle, codebook e uma tabela explicita
-de arestas nativas fornecida por `--native-reply-edges`. O comando nao infere
-arestas nem treina modelos. Sua ajuda lista os insumos obrigatorios.
+## Scope and Maintenance
 
-## Testes e Manutencao
+The repository does not train or run disentanglement or toxicity models,
+ship model checkpoints, or claim a completed human-annotated benchmark.
+Native replies are observed silver evidence; their absence is not a negative
+semantic label. The internal package name `discord_disentanglement` remains
+for import and provenance compatibility.
+
+Population and sampling reports are now generated in
+`data\processed\disentanglement\reports` by default, not in the preserved
+research documentation. Report text and numeric formatting are English.
+
+Legacy cleanup is a dry run unless explicitly applied:
 
 ```powershell
-python -m pytest tests -q
+uv run --locked python scripts\cleanup_legacy.py
+uv run --locked python scripts\cleanup_legacy.py --apply `
+  --report data\maintenance\legacy_cleanup.json
 ```
 
-A limpeza de resultados antigos e caches dos modulos removidos e auditavel:
-
-```powershell
-python scripts/cleanup_legacy.py
-python scripts/cleanup_legacy.py --apply --report data/maintenance/legacy_cleanup.json
-```
-
-Sem `--apply`, o script apenas apresenta o plano. Ele usa uma lista fechada de
-caminhos legados e verifica referencias nos manifestos preservados. Os corpora,
-o pacote historico, a populacao, a amostra atual, o artigo, as notas de pesquisa
-e a auditoria vigente nao sao alvos de exclusao.
+The script uses a closed list of legacy paths and checks references in
+preserved manifests. Current corpora, historical annotation packages,
+research notes, the paper and the active audit are not deletion targets.

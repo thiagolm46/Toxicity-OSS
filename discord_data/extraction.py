@@ -1,4 +1,4 @@
-"""Transformação do arquivo bruto e escrita segura das mensagens em Parquet."""
+"""Transform the raw archive and safely write messages to Parquet."""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ def compile_channel_filters(
             try:
                 patterns.append(re.compile(value.strip(), re.IGNORECASE))
             except re.error as error:
-                raise ValueError(f"Regex inválida em {label}: {value!r} ({error})") from error
+                raise ValueError(f"Invalid regex in {label}: {value!r} ({error})") from error
         return patterns
 
     return compile_group(include, "include"), compile_group(exclude, "exclude")
@@ -87,7 +87,7 @@ def load_selected_servers(
 ) -> tuple[dict[str, dict[str, Any]], set[str]]:
     frame = pd.read_parquet(selected_servers_path)
     if frame.empty:
-        raise ValueError("O arquivo de servidores selecionados está vazio.")
+        raise ValueError("The selected servers file is empty.")
 
     if "is_selected" in frame.columns:
         def selected(value: Any) -> bool:
@@ -99,7 +99,7 @@ def load_selected_servers(
 
         frame = frame[frame["is_selected"].map(selected)].copy()
         if frame.empty:
-            raise ValueError("Nenhum servidor possui is_selected=true.")
+            raise ValueError("No server has is_selected=true.")
 
     frame["guild_id"] = frame["guild_id"].astype(str)
     optional_columns = ["name", "positive_score", "matched_positive_terms"]
@@ -117,7 +117,7 @@ def ensure_new_output(output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists():
         raise FileExistsError(
-            "A saída já existe. Informe outro caminho para preservar a fonte e execuções anteriores."
+            "Output already exists. Choose another path to preserve the source and previous runs."
         )
 
 
@@ -259,7 +259,7 @@ def extract_archive(
                     flush()
         flush()
         if writer is None:
-            raise ValueError("Nenhuma mensagem foi encontrada no escopo selecionado.")
+            raise ValueError("No messages were found in the selected scope.")
         return stats
     finally:
         if writer is not None:
