@@ -1,14 +1,26 @@
 # Codebook de anotação conversacional
 
-**Versão:** 1.1  
+**Versão:** 1.3  
 **Unidade de anotação:** janela contínua de um canal Discord
+
+**Estado do corpus de referência:** nenhuma anotação humana foi realizada.
+As regras abaixo especificam o protocolo para as sessões futuras; não são
+resultados de uma sessão executada nem confirmação independente das funções
+do aplicativo.
+
+A preparação e a construção do bundle estão implementadas no código disponível.
+Importação, confirmação, persistência de decisões, adjudicação e exportação pelo
+desktop são requisitos especificados aqui; sua implementação e operação não
+foram estabelecidas pela evidência examinada. Em particular, a convenção
+estruturada de candidatos abaixo não implica transferência automática já
+implementada no aplicativo. O protocolo deve ser avaliado em piloto.
 
 ## 1. Estrutura de dados
 
-`native_reply_annotation_windows.csv` é o artefato de preparação. Antes da
-anotação, ele deve ser achatado com `build-annotation-bundle` em três tabelas
-Parquet. As tabelas canônicas de anotação são `messages.parquet` e
-`annotations.parquet`.
+O arquivo de janelas da execução, `annotation_windows.csv`, é o artefato de
+preparação. Antes da anotação, ele deve ser achatado com
+`build-annotation-bundle` em quatro tabelas Parquet: mensagens, participações
+nas janelas, arestas humanas e estados das fontes.
 
 ### `messages.parquet`
 
@@ -33,9 +45,11 @@ sample_id, message_id, is_context, sequence
 
 Uma mensagem pode aparecer em várias amostras porque o contexto de uma janela
 pode sobrepor o trecho anotado da próxima. A chave é `(sample_id, message_id)`.
-`is_context=true` indica contexto anterior; `is_context=false` indica trecho
-alvo. Para obter uma amostra completa, faça a junção por `message_id` entre esta
-tabela e `messages.parquet`.
+`is_context=true` indica registros visíveis não alvo, anteriores ou intervenientes;
+`is_context=false` indica trecho alvo. Uma mensagem alvo de uma janela pode ser
+contexto em outra: o papel pertence à participação, não à mensagem canônica.
+Para obter uma amostra completa, faça a junção por `message_id` entre esta tabela
+e `messages.parquet`.
 
 ### `annotations.parquet`
 
@@ -47,13 +61,15 @@ sample_id, source_message_id, target_message_id, annotator_id, relation,
 ambiguous, confidence, notes
 ```
 
-No codebook inicial, `relation=reply` é a única relação materializada. Arestas
-ambíguas são preservadas, mas ficam fora do gold derivado por padrão; a opção
-`--include-ambiguous` as inclui explicitamente.
+`relation=reply` é a relação primária. O grafo aceito contém somente arestas
+confirmadas, não ambíguas, de fontes `complete`. O campo `ambiguous` preservado
+no esquema não torna um registro incerto uma aresta aceita. No protocolo
+revisado, candidatos de decisões irresolvidas pertencem ao registro estruturado
+da fonte, descrito na seção 4.1, e não à tabela de arestas aceitas.
 
 ### `source_statuses.parquet`
 
-Esta terceira tabela é necessária para decisões humanas sem aresta. Cada fonte
+Esta quarta tabela é necessária para decisões humanas sem aresta. Cada fonte
 do trecho alvo possui uma linha com `source_status`; assim, a ausência de uma
 linha em `annotations.parquet` nunca significa `no_reply`.
 
@@ -115,43 +131,145 @@ aparecer em uma ou mais arestas:
 ]
 ```
 
-Cada aresta afirma que a fonte responde semanticamente ao alvo. A fonte deve
-estar no trecho `annotated`; o alvo deve ser uma mensagem visível, estritamente
-anterior e da mesma `sample_id`. O alvo pode estar no contexto ou no trecho
-anotado; sua posição é determinada por `is_context` em `messages.parquet`.
+Cada aresta aceita afirma que o ato comunicativo da fonte responde diretamente
+ou dá continuidade à contribuição do antecedente, com apoio no conteúdo e no
+contexto visível. Tema, adjacência, autoria comum, menção ou reply nativo não
+bastam isoladamente. Uma continuação do mesmo autor exige dependência da
+contribuição anterior. Múltiplas arestas aceitas são conjunção: a fonte responde
+a todos os antecedentes, não a um candidato indeterminado entre eles.
+
+A fonte deve estar no trecho `annotated`; o antecedente deve ser visível e
+anterior na mesma janela e no mesmo canal. A identidade usa a chave
+`(server_id, message_id)`, sem presumir unicidade entre servidores. A ordem é
+timestamp UTC seguido de `message_id` como desempate determinístico. Em um
+empate, essa ordem permite uma direção e impede a outra por convenção, não por
+evidência de criação. O ID pseudonimizado não reconstrói cronologia; se a direção
+for incerta, registre a incerteza, sem deduzi-la do desempate. Não se aceitam
+self-links. O papel de contexto ou alvo é determinado por `is_context` na
+participação em `sample_messages.parquet`.
+
+Uma recontagem direta dos artefatos preservados encontrou 184 grupos de empate
+no mesmo canal, envolvendo 368 mensagens elegíveis da população. Nas tarefas
+amostradas, existe apenas um par empatado, composto por mensagens de contexto;
+nenhum alvo compartilha timestamp com outra mensagem visível na sua janela.
+Assim, o desempate não restringiu as escolhas de antecedentes dos alvos da
+amostra realizada. Isso não demonstra que o ID represente a ordem real.
 
 `source_statuses.parquet` contém uma decisão para cada fonte do trecho alvo,
 mas não uma relação pai-filho. Valores permitidos em `source_status`:
 
-- `pending`: anotação ainda aberta;
-- `complete`: a lista de zero ou mais arestas da fonte está finalizada;
-- `no_reply`: após revisão, não foi atribuída relação de resposta semântica;
-- `outside_context`: há indício de antecedente anterior ao contexto visível;
-- `ambiguous`: a evidência não permite decidir.
-- `new_conversation`: há início claro de tópico, explicitamente julgado pelo
-  anotador.
+- `pending`: nenhuma decisão foi confirmada; seleções em rascunho não são
+  arestas aceitas, e rascunho vazio não significa ausência de resposta.
+- `complete`: pelo menos um antecedente visível foi confirmado e a avaliação
+  da fonte foi concluída, sem alternativas ou relações necessárias pendentes.
+- `no_reply`: a inspeção não sustenta uma relação de resposta nem fornece
+  evidência específica de dependência irresolvida, e não há evidência positiva
+  de abertura explícita de tópico. A decisão diz respeito às mensagens
+  anteriores, não à ausência de respostas posteriores; ela não certifica que
+  inexista um antecedente fora da janela.
+- `outside_context`: a evidência visível sustenta dependência de uma contribuição
+  anterior indisponível. Exige nota com essa evidência; mera possibilidade de
+  contexto ausente não basta, e nenhum ID externo é inventado.
+- `ambiguous`: há evidência específica de uma decisão relacional irresolvida,
+  como candidatos concorrentes ou interpretação insuficiente de uma expressão
+  dependente de resposta. Exige justificativa e registro dos candidatos
+  conhecidos; estes não entram no grafo aceito.
+- `new_conversation`: há evidência positiva de abertura independente de tópico,
+  em vez de resposta a uma contribuição anterior. É uma decisão sem aresta mais
+  específica que `no_reply`; não cria self-link nem implica isolamento futuro.
 
-As arestas finais devem vir apenas de fontes `complete`. `no_reply`,
-`outside_context` e `ambiguous` não criam arestas e não implicam que a mensagem
-inicia uma conversa nova. `new_conversation` registra explicitamente um inicio;
-nao se cria self-link na tabela humana. Um pai fora da janela nunca é inventado.
+Os seis estados são mutuamente exclusivos por fonte. Somente `complete` admite
+arestas aceitas, sempre não ambíguas. Os demais estados não geram arestas aceitas;
+fontes sem antecedente não podem ser confirmadas como `complete`.
+Quando um vínculo é defensável, mas outro vínculo necessário continua incerto
+ou externo, a fonte permanece `ambiguous` ou `outside_context`, respectivamente.
+O grafo é conservador no nível da fonte: uma relação individual defensável pode
+ficar de fora quando a avaliação completa de antecedentes continua irresolvida.
+Sua ausência não é um julgamento negativo sobre essa relação. Mídia inacessível
+que impede interpretação relacional exige registrar incerteza, não inferir seu
+conteúdo.
+
+A fronteira entre os estados depende da evidência, não apenas da ausência de
+um antecedente selecionado. Para uma confirmação curta como "ok", evidência
+de dependência com antecedente não identificado requer `ambiguous`; evidência
+específica de dependência anterior externa requer `outside_context`. A falta
+de seleção, isoladamente, não estabelece nenhum desses estados. `no_reply`
+exige ausência de suporte à relação e de indício específico de dependência
+irresolvida.
+
+### 4.1. Ciclo de vida e candidatos preservados
+
+Rascunhos são exclusivamente trabalho não confirmado. Pelo procedimento
+especificado, confirmar uma disposição requer gravar o estado da fonte, os
+candidatos e a justificativa em um registro durável antes de encerrar o
+rascunho de trabalho. Candidatos são informação de suporte separada de
+arestas aceitas; uma relação defensável não deve ser confundida com uma
+mera alternativa.
+
+O esquema atual de `source_statuses.parquet` possui `notes`, mas não campos
+próprios para candidatos. Sem alterar esse esquema, o protocolo especifica um
+objeto JSON no campo `notes`, com `candidates` e `rationale`. Cada candidato
+possui `message_id` e `evidence_class`, com valores `defensible` ou `alternative`.
+Uma dependência externa é descrita na justificativa, sem inventar seu ID.
+A estrutura abaixo é uma convenção especificada, não uma saída observada:
+
+```json
+{
+  "candidates": [
+    {"message_id": "M17", "evidence_class": "defensible"}
+  ],
+  "rationale": "Há um vínculo visível defensável e evidência específica de outra dependência anterior externa."
+}
+```
+
+Uma fonte `outside_context` pode, assim, conservar o candidato visível no
+registro confirmado sem admiti-lo no grafo aceito. A exportação conforme o
+protocolo deve preservar estado e conteúdo JSON de `notes`, e identificar
+fonte, janela e anotador. Não há evidência aqui de que o desktop faça a
+transferência ou a serialização automaticamente. Uma implementação deve
+demonstrar essa preservação na confirmação e na exportação antes de declarar
+conformidade. O publicador de datasets de preparação copia as tabelas recebidas;
+isso não comprova o ciclo de confirmação do desktop.
+
+Confirmar requer estado explícito e cumprimento das restrições de fonte, canal,
+ordem e evidência; disposições externas ou incertas exigem justificativa.
+Revisar a janela requer uma disposição confirmada para cada alvo, ausência de
+rascunhos de trabalho não confirmados e inspeção das arestas e estados.
+Candidatos preservados em registros confirmados não são rascunhos pendentes.
+Uma disposição externa ou ambígua pode estar revisada e continuar
+semanticamente irresolvida. Essa revisão não certifica suficiência de contexto,
+correção ou concordância entre anotadores. A adjudicação é especificada como
+uma camada separada, com revisor e sessões de origem, preservando as decisões
+independentes.
 
 ## 5. Agrupamento conversacional
 
-A derivacao de conversas e posterior a conclusao e validacao dos rotulos.
-Ela nao integra o executavel atual, dedicado a preparar os dados para anotacao.
-O comando legado de materializacao foi retirado; nao ha treinamento ou inferencia
-nesta etapa. A regra futura deve ser versionada junto dos dados anotados.
+A derivação de componentes é posterior à anotação. Ela não integra o executável
+atual de preparação e não foi realizada sobre rótulos humanos do experimento.
+Não há treinamento ou inferência nesta etapa. A implementação futura deve
+versionar a regra de derivação junto dos dados anotados.
 
-Uma possivel convencao de `conversation_id` e o componente conexo nao
-direcionado das arestas humanas aceitas. Para as arestas
+Para inspeção local, o grafo de uma janela contém todas as suas mensagens
+visíveis e somente as arestas humanas aceitas, conforme a seção anterior.
+Os componentes são fracamente conexos: ignora-se a direção das arestas.
+Evidência nativa, rascunhos e candidatos incertos não acrescentam arestas.
+Para as arestas
 `M10 -> M4`, `M11 -> M4`, `M12 -> M7`, `M13 -> M10` e `M13 -> M11`, as mensagens
 `M4`, `M10`, `M11` e `M13` pertencem ao mesmo componente; `M7` e `M12` pertencem
-a outro.
+a outro. Acrescentar uma resposta confirmada ligada aos dois componentes os
+funde: a regra produz uma partição do grafo, não pertencimentos sobrepostos.
 
-`conversation_id` seria, portanto, derivado, nao um rotulo do anotador.
-Fontes sem aresta nao devem ser convertidas automaticamente em conversas
-singleton; inicios explicitamente julgados devem permanecer distinguiveis.
+Mensagens de contexto não são fontes de anotação; portanto, relações entre elas
+podem estar ausentes. Dois alvos ligados a contextos diferentes podem aparecer
+separados mesmo quando uma relação não observada uniria suas conversas.
+Relações além das bordas e continuações posteriores também podem faltar.
+Assim, os componentes são apoio local à inspeção, não fronteiras completas de
+conversas. Um vértice isolado não é automaticamente uma conversa singleton
+confirmada. Inícios explicitamente julgados permanecem distinguíveis.
+
+Os componentes são locais à janela, sem consolidação automática entre janelas
+sobrepostas. A revisão é especificada como inspeção; alterar um agrupamento
+requer revisar as decisões subjacentes e derivar novamente o grafo.
 
 ## 6. Regras iniciais de decisão
 
@@ -165,13 +283,15 @@ singleton; inicios explicitamente julgados devem permanecer distinguiveis.
 | Início claro de tópico | Marcar `source_status=new_conversation`; não criar self-link manualmente. |
 | Continuação do próprio autor | Examinar conteúdo e contexto; mesma autoria não é ligação automática. |
 | "sim", "não", "obrigado" | Procurar antecedente no contexto; não assumir a mensagem imediatamente anterior. |
-| Antecedente anterior ao trecho alvo | Buscar no contexto; se continuar invisível, usar `outside_context`. |
-| Nenhum antecedente identificável | Usar `no_reply`; não forçar uma ligação. |
-| Mensagem ou relação incerta | Usar `ambiguous=true` na aresta, ou `source_status=ambiguous` quando não houver uma aresta defensável. |
+| Antecedente anterior ao trecho alvo | Buscar no contexto; usar `outside_context` apenas com evidência específica de dependência externa. |
+| Sem suporte à resposta, dependência irresolvida ou abertura explícita | Usar `no_reply`, sem afirmar que inexiste contexto não observado. |
+| Evidência de dependência de antecedente indisponível | Usar `outside_context` e justificar em nota; não inventar o ID. |
+| Alternativas ou interpretação irresolvidas | Usar `source_status=ambiguous`; candidatos retidos são incertos, não arestas aceitas. |
 
 ## 7. Piloto e revisão
 
-Antes da anotação em escala, executar três rodadas piloto. Após cada rodada,
+Nenhuma rodada de anotação foi realizada. Antes da anotação em escala, executar
+três rodadas piloto. Após cada rodada,
 comparar discordâncias, registrar decisões de consenso e acrescentar exemplos
 anônimos de casos difíceis ao codebook. Casos prioritários: perguntas repetidas,
 múltiplos antecedentes, interjeições, respostas curtas, respostas sem menção e
